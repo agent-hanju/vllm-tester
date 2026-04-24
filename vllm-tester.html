@@ -41,6 +41,7 @@
   }
   .send-bar { text-align: center; margin: 16px 0; }
   .send-btn { font-size: 14px; padding: 6px 28px; font-weight: bold; }
+  .stop-btn { font-size: 14px; padding: 6px 28px; font-weight: bold; background: #c00; color: #fff; border-color: #900; }
 
   /* Import / Export 툴바 */
   .toolbar { display: flex; align-items: center; gap: 8px; margin: 0 0 14px; }
@@ -187,6 +188,7 @@
     <div><label>tool_choice <small>(auto/none/required/JSON)</small></label><input id="hp-tool_choice" type="text" placeholder="auto"></div>
     <div style="grid-column:1/-1;"></div>
     <div><label>stream</label><select id="hp-stream"><option value="">미전송(false)</option><option value="true">true</option><option value="false">false</option></select></div>
+    <div><label>stream_options.include_usage</label><select id="hp-stream-include-usage"><option value="">미전송</option><option value="true">true</option><option value="false">false</option></select></div>
     <div><label>logprobs</label><select id="hp-logprobs"><option value="">미전송(false)</option><option value="true">true</option><option value="false">false</option></select></div>
     <div><label>ignore_eos</label><select id="hp-ignore_eos"><option value="">미전송(false)</option><option value="true">true</option><option value="false">false</option></select></div>
     <div><label>skip_special_tokens</label><select id="hp-skip_special_tokens"><option value="">미전송(true)</option><option value="true">true</option><option value="false">false</option></select></div>
@@ -242,8 +244,9 @@
     <p    class="r-status"       hidden></p>
     <div class="r-error" hidden><label>Error</label><pre></pre></div>
     <div class="r-body"  hidden><label>Body</label><pre></pre></div>
-    <details class="r-usage"     hidden><summary>Usage</summary><pre></pre></details>
     <div class="items"></div>
+    <details class="r-usage"    hidden><summary>Usage</summary><pre></pre></details>
+    <details class="r-logprobs" hidden><summary>Logprobs</summary><pre></pre></details>
   </div>
 </fieldset>
 
@@ -393,7 +396,8 @@ const $responseItems = $response.querySelector('.items');
 const $rStatus = $response.querySelector('.r-status');
 const $rError  = $response.querySelector('.r-error');
 const $rBody   = $response.querySelector('.r-body');
-const $rUsage  = $response.querySelector('.r-usage');
+const $rUsage    = $response.querySelector('.r-usage');
+const $rLogprobs = $response.querySelector('.r-logprobs');
 
 function validateJsonSchema(text) {
   // 정식 JSON Schema 스펙 검증이 아님 — LLM이 작성한 휴리스틱적 검증 메서드
@@ -458,7 +462,7 @@ function validateJsonString(text) {
 
 function checkEmpty(container) {
   const itemsEl = container.querySelector(':scope > .items') || container;
-  const hasItems = !!itemsEl.querySelector('.item');
+  const hasItems = !!itemsEl.querySelector(':scope > .item');
   container.querySelector('p.empty').hidden = hasItems;
 }
 
@@ -577,7 +581,7 @@ function createMessageElement(init = {}) {
 }
 
 function addMessage() {
-  const items = $messagesItems.querySelectorAll('.item');
+  const items = $messagesItems.querySelectorAll('.message-item');
   let role = 'user';
   if (items.length === 0) {
     role = 'system';
@@ -604,7 +608,7 @@ function buildRequest() {
   if (model) body.model = model;
 
   // ----- messages -----
-  body.messages = [...$messagesItems.querySelectorAll('.item')].map(div => {
+  body.messages = [...$messagesItems.querySelectorAll('.message-item')].map(div => {
     const role = div.querySelector('.role-select').value;
     if (role === 'system' || role === 'user') {
       return { role, content: div.querySelector('.f-content textarea').value };
@@ -687,6 +691,9 @@ function buildRequest() {
   hpBool('ignore_eos');
   hpBool('skip_special_tokens');
 
+  const siuVal = document.getElementById('hp-stream-include-usage').value;
+  if (siuVal) body.stream_options = { include_usage: siuVal === 'true' };
+
   return { url, apiKey, body };
 }
 
@@ -732,10 +739,32 @@ function copyResponseToMessage(responseMessage) {
 function resetResponse() {
   $responseItems.replaceChildren();
   $response.querySelector('.empty').hidden = false;
-  [$rStatus, $rError, $rBody, $rUsage].forEach(el => { el.hidden = true; });
+  [$rStatus, $rError, $rBody, $rUsage, $rLogprobs].forEach(el => { el.hidden = true; });
+}
+
+let currentAbortController = null;
+
+function abortRequest() {
+  if (currentAbortController) currentAbortController.abort();
+}
+
+function setSending(sending) {
+  if (sending) {
+    $sendBtn.textContent = '■ STOP';
+    $sendBtn.classList.add('stop-btn');
+  } else {
+    $sendBtn.textContent = 'SEND';
+    $sendBtn.classList.remove('stop-btn');
+    currentAbortController = null;
+  }
 }
 
 async function sendRequest() {
+  if (currentAbortController) {
+    abortRequest();
+    return;
+  }
+
   const { url, apiKey, body } = buildRequest();
 
   if (!url) {
@@ -747,8 +776,8 @@ async function sendRequest() {
     return;
   }
 
-  $sendBtn.disabled = true;
-  $sendBtn.textContent = 'SENDING...';
+  currentAbortController = new AbortController();
+  setSending(true);
   resetResponse();
   $response.querySelector('.empty').hidden = true;
   $rStatus.hidden = false;
@@ -764,6 +793,7 @@ async function sendRequest() {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
+      signal: currentAbortController.signal,
     });
 
     const contentType = res.headers.get('content-type') || '';
@@ -776,11 +806,16 @@ async function sendRequest() {
     }
 
   } catch (e) {
-    $rStatus.className = 'r-status v-err';
-    $rStatus.textContent = '✗ 요청 실패: ' + e.message + ' (CORS 또는 네트워크 오류일 수 있습니다)';
+    if (e.name === 'AbortError') {
+      const ms = Math.round(performance.now() - t0);
+      $rStatus.className = 'r-status v-warn';
+      $rStatus.textContent = `⊘ 요청 중단됨 · ${ms}ms`;
+    } else {
+      $rStatus.className = 'r-status v-err';
+      $rStatus.textContent = '✗ 요청 실패: ' + e.message + ' (CORS 또는 네트워크 오류일 수 있습니다)';
+    }
   } finally {
-    $sendBtn.disabled = false;
-    sendBtn.textContent = 'SEND';
+    setSending(false);
     renderRequestView(body);
   }
 }
@@ -822,13 +857,19 @@ async function renderNormalResponse(res, t0) {
         div.querySelector('.r-tc').hidden = false;
         div.querySelector('.r-tc').textContent = JSON.stringify(msg.tool_calls, null, 2);
       }
-
       $responseItems.appendChild(div);
     });
 
     if (json.usage) {
       $rUsage.hidden = false;
       $rUsage.querySelector('pre').textContent = JSON.stringify(json.usage, null, 2);
+    }
+
+    const allLogprobs = json.choices.map(c => c.logprobs).filter(Boolean);
+    if (allLogprobs.length > 0) {
+      $rLogprobs.hidden = false;
+      $rLogprobs.querySelector('pre').textContent = JSON.stringify(
+        allLogprobs.length === 1 ? allLogprobs[0] : allLogprobs, null, 2);
     }
 
   } else if (json && json.error) {
@@ -860,7 +901,7 @@ function showInChoice(div, cls, labelCls, text) {
 }
 
 async function renderStreamingResponse(res, t0) {
-  const acc = { content: '', reasoning: '', tool_calls: [], finish: null, usage: null };
+  const acc = { content: '', reasoning: '', tool_calls: [], finish: null, usage: null, logprobs: [] };
 
   $rStatus.hidden    = false;
   $rStatus.className = 'r-status v-ok';
@@ -877,41 +918,56 @@ async function renderStreamingResponse(res, t0) {
   const decoder = new TextDecoder();
   let buffer = '';
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  let aborted = false;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    buffer += decoder.decode(value, { stream: true });
+      buffer += decoder.decode(value, { stream: true });
 
-    const lines = buffer.split('\n');
-    buffer = lines.pop();
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
 
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith('data:')) continue;
-      const data = trimmed.slice(5).trim();
-      if (data === '[DONE]') continue;
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('data:')) continue;
+        const data = trimmed.slice(5).trim();
+        if (data === '[DONE]') continue;
 
-      try {
-        mergeStreamChunk(JSON.parse(data), acc);
-      } catch {
-        // 깨진 chunk 는 그냥 무시
+        try {
+          mergeStreamChunk(JSON.parse(data), acc);
+        } catch {
+          // 깨진 chunk 는 그냥 무시
+        }
       }
-    }
 
-    showInChoice(div, '.r-reasoning', '.r-reasoning-label', acc.reasoning);
-    showInChoice(div, '.r-content',   '.r-content-label',   acc.content);
-    showInChoice(div, '.r-tc',        '.r-tc-label',
-      acc.tool_calls.length > 0 ? JSON.stringify(acc.tool_calls, null, 2) : '');
-    $rStatus.textContent =
-      `◌ ${res.status} ${res.statusText} (streaming) · ${Math.round(performance.now() - t0)}ms`;
+      showInChoice(div, '.r-reasoning', '.r-reasoning-label', acc.reasoning);
+      showInChoice(div, '.r-content',   '.r-content-label',   acc.content);
+      showInChoice(div, '.r-tc',        '.r-tc-label',
+        acc.tool_calls.length > 0 ? JSON.stringify(acc.tool_calls, null, 2) : '');
+      $rStatus.textContent =
+        `◌ ${res.status} ${res.statusText} (streaming) · ${Math.round(performance.now() - t0)}ms`;
+    }
+  } catch (e) {
+    if (e.name === 'AbortError') {
+      aborted = true;
+    } else {
+      throw e;
+    }
   }
 
   const ms = Math.round(performance.now() - t0);
-  $rStatus.textContent =
-    `✓ ${res.status} ${res.statusText} · finish: ${acc.finish || 'unknown'} · ${ms}ms`;
-  div.querySelector('.r-title').textContent =
-    `Choice #0 (finish_reason: ${acc.finish || 'unknown'})`;
+  if (aborted) {
+    $rStatus.className = 'r-status v-warn';
+    $rStatus.textContent = `⊘ ${res.status} ${res.statusText} · 스트리밍 중단됨 · ${ms}ms`;
+    div.querySelector('.r-title').textContent = 'Choice #0 (중단됨)';
+  } else {
+    $rStatus.textContent =
+      `✓ ${res.status} ${res.statusText} · finish: ${acc.finish || 'unknown'} · ${ms}ms`;
+    div.querySelector('.r-title').textContent =
+      `Choice #0 (finish_reason: ${acc.finish || 'unknown'})`;
+  }
 
   copyBtn.disabled = false;
   copyBtn.textContent = '↓ Messages 에 assistant 로 추가';
@@ -921,6 +977,10 @@ async function renderStreamingResponse(res, t0) {
     tool_calls: acc.tool_calls,
   }));
 
+  if (acc.logprobs.length > 0) {
+    $rLogprobs.hidden = false;
+    $rLogprobs.querySelector('pre').textContent = JSON.stringify(acc.logprobs, null, 2);
+  }
   if (acc.usage) {
     $rUsage.hidden = false;
     $rUsage.querySelector('pre').textContent = JSON.stringify(acc.usage, null, 2);
@@ -952,6 +1012,7 @@ function mergeStreamChunk(chunk, acc) {
       }
     }
     if (ch.finish_reason) acc.finish = ch.finish_reason;
+    if (ch.logprobs && ch.logprobs.content) acc.logprobs.push(...ch.logprobs.content);
   }
   if (chunk.usage) acc.usage = chunk.usage;
 }
