@@ -78,6 +78,16 @@
   .item-head .left { display: flex; align-items: center; gap: 8px; }
   .item-head .right button { padding: 2px 6px; }
 
+  .item[draggable="true"] { cursor: grab; }
+  .drag-placeholder {
+    background: rgba(100, 150, 255, 0.18);
+    border: 2px dashed rgba(80, 120, 255, 0.45);
+    border-radius: 2px;
+    margin: 8px 0;
+    box-sizing: border-box;
+    pointer-events: none;
+  }
+
   .row { display: grid; gap: 8px; grid-template-columns: 1fr 1fr; }
 
   .hyperparams {
@@ -460,6 +470,43 @@ function validateJsonString(text) {
   }
 }
 
+/* ---- drag-sort ---- */
+let _dragSrc = null;
+let _dragPh  = null;
+
+function _getDragAfter(itemsEl, y) {
+  const items = [...itemsEl.querySelectorAll(':scope > .item:not(.drag-placeholder)')];
+  return items.reduce((closest, child) => {
+    const box    = child.getBoundingClientRect();
+    const offset = y - box.top - box.height / 2;
+    if (offset < 0 && offset > closest.offset) return { offset, element: child };
+    return closest;
+  }, { offset: Number.NEGATIVE_INFINITY }).element;
+}
+
+function enableDragSort(container) {
+  const itemsEl = container.querySelector(':scope > .items') || container;
+  itemsEl.addEventListener('dragover', e => {
+    if (!_dragSrc || _dragSrc.parentNode !== itemsEl) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const after = _getDragAfter(itemsEl, e.clientY);
+    const target = after == null ? null : after;
+    const isSameSpot = target === _dragSrc || target === _dragSrc.nextElementSibling;
+    if (isSameSpot) { _dragPh.remove(); return; }
+    if (target == null) itemsEl.appendChild(_dragPh);
+    else itemsEl.insertBefore(_dragPh, target);
+  });
+  itemsEl.addEventListener('drop', e => {
+    if (!_dragSrc || _dragSrc.parentNode !== itemsEl) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (_dragPh?.parentNode === itemsEl) itemsEl.insertBefore(_dragSrc, _dragPh);
+    checkEmpty(container);
+  });
+}
+/* ---- /drag-sort ---- */
+
 function checkEmpty(container) {
   const itemsEl = container.querySelector(':scope > .items') || container;
   const hasItems = !!itemsEl.querySelector(':scope > .item');
@@ -479,6 +526,23 @@ function attachItemButtonListeners(div, container, onchange) {
     div.remove();
     checkEmpty(container);
     onchange?.();
+  });
+
+  div.setAttribute('draggable', 'true');
+  div.addEventListener('dragstart', (e) => {
+    if (e.target.closest('input, textarea, select, button')) { e.preventDefault(); return; }
+    e.stopPropagation();
+    _dragSrc = div;
+    _dragPh  = document.createElement('div');
+    _dragPh.className = 'drag-placeholder';
+    _dragPh.style.height = div.offsetHeight + 'px';
+    setTimeout(() => { div.style.opacity = '0.4'; }, 0);
+  });
+  div.addEventListener('dragend', () => {
+    div.style.opacity = '';
+    _dragPh?.remove();
+    _dragPh  = null;
+    _dragSrc = null;
   });
 }
 
@@ -567,6 +631,7 @@ function createMessageElement(init = {}) {
     tcItems.replaceChildren();
     checkEmpty(tcContainer);
   });
+  enableDragSort(tcContainer);
 
   function applyRole(r) {
     fReasoning.hidden = r !== 'assistant';
@@ -1405,6 +1470,9 @@ $importFile.addEventListener('change', (e) => {
 $messagesItems.appendChild(createMessageElement({ role: 'system' }));
 $messagesItems.appendChild(createMessageElement({ role: 'user' }));
 checkEmpty($messagesList);
+
+enableDragSort($toolsList);
+enableDragSort($messagesList);
 </script>
 
 </body>
