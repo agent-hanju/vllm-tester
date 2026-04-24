@@ -529,8 +529,11 @@ function attachItemButtonListeners(div, container, onchange) {
   });
 
   div.setAttribute('draggable', 'true');
+  div.addEventListener('mousedown', (e) => {
+    div._dragLocked = !!e.target.closest('input, textarea, select, button');
+  });
   div.addEventListener('dragstart', (e) => {
-    if (e.target.closest('input, textarea, select, button')) { e.preventDefault(); return; }
+    if (div._dragLocked) { e.preventDefault(); return; }
     e.stopPropagation();
     _dragSrc = div;
     _dragPh  = document.createElement('div');
