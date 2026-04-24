@@ -69,6 +69,17 @@ button {
 .item-head .left { display: flex; align-items: center; gap: 8px; }
 .item-head .right button { padding: 2px 6px; }
 
+/* 드래그 정렬 */
+.item[draggable="true"] { cursor: grab; }
+.drag-placeholder {
+  background: rgba(100, 150, 255, 0.18);
+  border: 2px dashed rgba(80, 120, 255, 0.45);
+  border-radius: 2px;
+  margin: 8px 0;
+  box-sizing: border-box;
+  pointer-events: none;
+}
+
 .row { display: grid; gap: 8px; grid-template-columns: 1fr 1fr; }
 
 .hyperparams {

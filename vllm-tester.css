@@ -176,6 +176,17 @@ button:hover { border-color: var(--blue); color: var(--blue); }
 .item-head .left { display: flex; align-items: center; gap: 8px; }
 .item-head .right button { padding: 2px 6px; }
 
+/* 드래그 정렬 */
+.item[draggable="true"] { cursor: grab; }
+.drag-placeholder {
+  background: rgba(26, 79, 160, 0.12);
+  border: 2px dashed var(--blue);
+  border-radius: 4px;
+  margin: 8px 0;
+  box-sizing: border-box;
+  pointer-events: none;
+}
+
 .row { display: grid; gap: 8px; grid-template-columns: 1fr 1fr; }
 
 .hyperparams {
