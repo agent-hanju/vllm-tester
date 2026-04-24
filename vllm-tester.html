@@ -4,69 +4,173 @@
 <meta charset="UTF-8">
 <title>vLLM Tester</title>
 <style>
+  /* ── 색상 변수 ── */
+  :root {
+    --bg:         #eef6ff;
+    --surface:    #ffffff;
+    --surface2:   #edf3fc;
+    --surface3:   #dfe9f7;
+    --border:     #c5d8f5;
+    --gold:       #e8a825;
+    --blue:       #1a4fa0;
+    --blue-dim:   #d2e5ff;
+    --text:       #0f2040;
+    --text-2:     #3a5a80;
+    --text-muted: #5a88c0;
+    --input-bg:   #f7f9fc;
+    --pre-bg:     #f3f5f8;
+    --shadow:     0 1px 4px rgba(26,79,160,0.08);
+    --shadow-offset: rgba(26,79,160,0.15);
+  }
+  @media (prefers-color-scheme: dark) { :root {
+    --bg:         #111827;
+    --surface:    #1e293b;
+    --surface2:   #0f172a;
+    --surface3:   #1a2d44;
+    --border:     #4a6080;
+    --gold:       #c8882a;
+    --blue:       #2563eb;
+    --blue-dim:   #1e3a6e;
+    --text:       #e2e8f0;
+    --text-2:     #94a3b8;
+    --text-muted: #60a5fa;
+    --input-bg:   #0f172a;
+    --pre-bg:     #0a111e;
+    --shadow:     0 1px 6px rgba(0,0,0,0.4);
+    --shadow-offset: rgba(0,0,0,0.35);
+  } }
+  html[data-theme="dark"] {
+    --bg:         #111827;
+    --surface:    #1e293b;
+    --surface2:   #0f172a;
+    --surface3:   #1a2d44;
+    --border:     #4a6080;
+    --gold:       #c8882a;
+    --blue:       #2563eb;
+    --blue-dim:   #1e3a6e;
+    --text:       #e2e8f0;
+    --text-2:     #94a3b8;
+    --text-muted: #60a5fa;
+    --input-bg:   #0f172a;
+    --pre-bg:     #0a111e;
+    --shadow:     0 1px 6px rgba(0,0,0,0.4);
+    --shadow-offset: rgba(0,0,0,0.35);
+  }
+
+  /* ── 기본 ── */
   body {
     font-family: sans-serif;
     font-size: 14px;
     max-width: 1000px;
     margin: 20px auto;
     padding: 0 16px;
-    color: #222;
+    background: var(--bg);
+    color: var(--text);
   }
-  h1 { font-size: 16px; margin: 0 0 14px; }
+  h1 {
+    font-size: 16px;
+    font-weight: 700;
+    margin: 0 0 14px;
+    color: var(--text);
+    letter-spacing: -0.3px;
+  }
 
-  fieldset { border: 1px solid #999; padding: 10px 12px; margin-bottom: 14px; }
-  legend { padding: 0 6px; font-weight: bold; }
+  /* ── Fieldset ── */
+  fieldset {
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--gold);
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin-bottom: 14px;
+    background: var(--surface);
+    box-shadow: var(--shadow), 2px 3px 0 var(--border);
+  }
+  legend {
+    padding: 0 6px;
+    font-weight: 700;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    color: var(--text-muted);
+  }
 
+  /* ── 폼 요소 ── */
   label {
     display: block;
-    font-size: 12px;
-    color: #555;
-    margin: 8px 0 2px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: .4px;
+    margin: 8px 0 3px;
   }
   input, textarea, select {
     font-family: monospace;
     font-size: 13px;
-    padding: 3px 5px;
-    border: 1px solid #aaa;
+    padding: 4px 7px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
     width: 100%;
     box-sizing: border-box;
+    background: var(--input-bg);
+    color: var(--text);
+  }
+  input:focus, textarea:focus, select:focus {
+    outline: none;
+    border-color: var(--blue);
+    box-shadow: 0 0 0 2px rgba(26,79,160,0.18);
   }
   textarea { resize: vertical; min-height: 48px; }
 
+  /* ── 버튼 ── */
   button {
     font-family: inherit;
     font-size: 12px;
-    padding: 3px 8px;
+    padding: 3px 9px;
     cursor: pointer;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: var(--surface);
+    color: var(--text-2);
   }
-  .send-bar { text-align: center; margin: 16px 0; }
-  .send-btn { font-size: 14px; padding: 6px 28px; font-weight: bold; }
-  .stop-btn { font-size: 14px; padding: 6px 28px; font-weight: bold; background: #c00; color: #fff; border-color: #900; }
+  button:hover { border-color: var(--blue); color: var(--blue); }
 
-  /* Import / Export 툴바 */
+  /* ── 툴바 ── */
   .toolbar { display: flex; align-items: center; gap: 8px; margin: 0 0 14px; }
   .io-status { font-size: 12px; margin-left: 4px; }
 
-  /* Endpoint */
-  .ep-server { font-size: 12px; color: #555; margin: 4px 0 8px; }
-  .ep-target { background: #f0f0f0; padding: 1px 4px; }
+  /* ── Endpoint ── */
+  .ep-server { font-size: 12px; color: var(--text-2); margin: 4px 0 8px; }
+  .ep-target {
+    background: var(--blue-dim);
+    color: var(--blue);
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-family: monospace;
+  }
   .ep-connect-row { align-items: flex-end; margin-bottom: 8px; }
   .ep-connect-actions { display: flex; align-items: flex-end; gap: 8px; padding-bottom: 1px; }
   .ep-connect-btn { padding: 4px 14px; }
   .ep-connect-status { font-size: 12px; }
 
-  /* 리스트 아이템 */
+  /* ── 리스트 아이템 ── */
   .list-item {
-    border: 1px solid #ccc;
+    border: 1px solid var(--border);
+    border-left: 2px solid var(--gold);
+    border-radius: 6px;
     padding: 8px 10px;
     margin: 8px 0;
-    background: #f9f9f9;
+    background: var(--surface2);
+    box-shadow: 2px 3px 0 var(--shadow-offset);
   }
   .tool-call {
-    border: 1px solid #ccc;
+    border: 1px solid var(--border);
+    border-left: 2px solid var(--gold);
+    border-radius: 5px;
     padding: 6px 8px;
-    margin: 6px 0;
-    background: #f3f3f3;
+    margin: 8px 0;
+    background: var(--surface3);
+    box-shadow: 2px 3px 0 var(--shadow-offset);
   }
   .item-head {
     display: flex;
@@ -87,33 +191,44 @@
     margin-top: 8px;
   }
   .hp-rf-schema { margin-top: 8px; }
-  .hp-summary { font-size: 12px; color: #777; }
+  .hp-summary { font-size: 12px; color: var(--text-2); }
 
   .add-row { text-align: right; margin-top: 6px; }
 
+  /* ── 검증 ── */
   .validation { font-size: 11px; margin-top: 3px; }
-  .v-ok { color: green; }
-  .v-err { color: #c00; }
-  .v-warn { color: #b80; }
+  .v-ok   { color: #16a34a; }
+  .v-err  { color: #dc2626; }
+  .v-warn { color: #d97706; }
+  @media (prefers-color-scheme: dark) {
+    .v-ok   { color: #4ade80; }
+    .v-err  { color: #f87171; }
+    .v-warn { color: #fbbf24; }
+  }
+  html[data-theme="dark"] .v-ok   { color: #4ade80; }
+  html[data-theme="dark"] .v-err  { color: #f87171; }
+  html[data-theme="dark"] .v-warn { color: #fbbf24; }
 
+  /* ── pre ── */
   pre {
-    background: #f5f5f5;
-    border: 1px solid #ddd;
-    padding: 6px 8px;
+    background: var(--pre-bg);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 6px 10px;
     margin: 4px 0;
     white-space: pre-wrap;
     word-break: break-word;
     font-size: 12px;
+    color: var(--text);
   }
 
   .req-preview { margin: 10px 0; }
 
-  .empty { color: #999; font-style: italic; padding: 4px; }
+  .empty { color: var(--text-muted); font-style: italic; padding: 4px; opacity: .7; }
   .clear-row { text-align: left; margin-bottom: 4px; }
-  details summary { cursor: pointer; color: #555; }
+  details summary { cursor: pointer; color: var(--text-2); }
 
   .role-select { width: auto; }
-
   .copy-btn { margin: 4px 0 8px; }
 </style>
 </head>
@@ -127,6 +242,7 @@
   <button id="exportBtn">📤 Request JSON Export</button>
   <input type="file" id="importFile" accept=".json,application/json" hidden>
   <span id="ioStatus" class="io-status"></span>
+  <button id="themeBtn" style="margin-left:auto" title="다크/라이트 토글">🌙 Dark</button>
 </div>
 
 <!-- Endpoint 표시부 -->
@@ -1392,6 +1508,13 @@ document.getElementById('clearMessages').addEventListener('click', () => {
 $sendBtn.addEventListener('click', sendRequest);
 
 document.getElementById('exportBtn').addEventListener('click', exportRequestJson);
+const $themeBtn = document.getElementById('themeBtn');
+$themeBtn.addEventListener('click', () => {
+  const html = document.documentElement;
+  const isDark = html.dataset.theme === 'dark';
+  html.dataset.theme = isDark ? '' : 'dark';
+  $themeBtn.textContent = isDark ? '🌙 Dark' : '☀️ Light';
+});
 document.getElementById('importBtn').addEventListener('click', () => {
   $importFile.value = '';
   $importFile.click();
