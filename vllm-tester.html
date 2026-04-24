@@ -1,0 +1,1350 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>vLLM Tester</title>
+<style>
+  body {
+    font-family: sans-serif;
+    font-size: 14px;
+    max-width: 1000px;
+    margin: 20px auto;
+    padding: 0 16px;
+    color: #222;
+  }
+  h1 { font-size: 16px; margin: 0 0 14px; }
+
+  fieldset { border: 1px solid #999; padding: 10px 12px; margin-bottom: 14px; }
+  legend { padding: 0 6px; font-weight: bold; }
+
+  label {
+    display: block;
+    font-size: 12px;
+    color: #555;
+    margin: 8px 0 2px;
+  }
+  input, textarea, select {
+    font-family: monospace;
+    font-size: 13px;
+    padding: 3px 5px;
+    border: 1px solid #aaa;
+    width: 100%;
+    box-sizing: border-box;
+  }
+  textarea { resize: vertical; min-height: 48px; }
+
+  button {
+    font-family: inherit;
+    font-size: 12px;
+    padding: 3px 8px;
+    cursor: pointer;
+  }
+  .send-bar { text-align: center; margin: 16px 0; }
+  .send-btn { font-size: 14px; padding: 6px 28px; font-weight: bold; }
+
+  /* Import / Export 툴바 */
+  .toolbar { display: flex; align-items: center; gap: 8px; margin: 0 0 14px; }
+  .io-status { font-size: 12px; margin-left: 4px; }
+
+  /* Endpoint */
+  .ep-server { font-size: 12px; color: #555; margin: 4px 0 8px; }
+  .ep-target { background: #f0f0f0; padding: 1px 4px; }
+  .ep-connect-row { align-items: flex-end; margin-bottom: 8px; }
+  .ep-connect-actions { display: flex; align-items: flex-end; gap: 8px; padding-bottom: 1px; }
+  .ep-connect-btn { padding: 4px 14px; }
+  .ep-connect-status { font-size: 12px; }
+
+  /* 리스트 아이템 */
+  .list-item {
+    border: 1px solid #ccc;
+    padding: 8px 10px;
+    margin: 8px 0;
+    background: #f9f9f9;
+  }
+  .tool-call {
+    border: 1px solid #ccc;
+    padding: 6px 8px;
+    margin: 6px 0;
+    background: #f3f3f3;
+  }
+  .item-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 4px;
+    gap: 8px;
+  }
+  .item-head .left { display: flex; align-items: center; gap: 8px; }
+  .item-head .right button { padding: 2px 6px; }
+
+  .row { display: grid; gap: 8px; grid-template-columns: 1fr 1fr; }
+
+  .hyperparams {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .hp-rf-schema { margin-top: 8px; }
+  .hp-summary { font-size: 12px; color: #777; }
+
+  .add-row { text-align: right; margin-top: 6px; }
+
+  .validation { font-size: 11px; margin-top: 3px; }
+  .v-ok { color: green; }
+  .v-err { color: #c00; }
+  .v-warn { color: #b80; }
+
+  pre {
+    background: #f5f5f5;
+    border: 1px solid #ddd;
+    padding: 6px 8px;
+    margin: 4px 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 12px;
+  }
+
+  .req-preview { margin: 10px 0; }
+
+  .empty { color: #999; font-style: italic; padding: 4px; }
+  .clear-row { text-align: left; margin-bottom: 4px; }
+  details summary { cursor: pointer; color: #555; }
+
+  .role-select { width: auto; }
+
+  .copy-btn { margin: 4px 0 8px; }
+</style>
+</head>
+<body>
+
+<h1>vLLM Tester</h1>
+
+<!-- Import / Export 툴바 -->
+<div class="toolbar">
+  <button id="importBtn">📥 Request JSON Import</button>
+  <button id="exportBtn">📤 Request JSON Export</button>
+  <input type="file" id="importFile" accept=".json,application/json" hidden>
+  <span id="ioStatus" class="io-status"></span>
+</div>
+
+<!-- Endpoint 표시부 -->
+<fieldset>
+  <legend>Endpoint</legend>
+
+  <!-- 서버 모드: Python 프록시 경유 -->
+  <p id="ep-server" class="ep-server" hidden>
+    프록시 경로: <code id="targetDisplay" class="ep-target"></code>
+    &nbsp;·&nbsp; vLLM <span id="versionDisplay"></span>
+  </p>
+
+  <!-- 로컬 모드: 직접 파일로 열었을 때 -->
+  <div id="ep-local" hidden>
+    <div class="row ep-connect-row">
+      <div>
+        <label>vLLM Base URL</label>
+        <input id="baseUrl" type="text" placeholder="http://localhost:8000">
+      </div>
+      <div class="ep-connect-actions">
+        <button id="connectBtn" class="ep-connect-btn">Connect</button>
+        <span id="connectStatus" class="ep-connect-status"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 공통: Model + API Key -->
+  <div class="row">
+    <div>
+      <label>Model</label>
+      <select id="model"></select>
+    </div>
+    <div id="ep-apikey">
+      <label>API Key (선택 — 비우면 헤더에 미포함)</label>
+      <input id="apiKey" type="password">
+    </div>
+  </div>
+</fieldset>
+
+<!-- Hyperparameters -->
+<fieldset>
+  <legend>Hyperparameters</legend>
+  <details>
+  <summary class="hp-summary">비워두면 전송 안함</summary>
+  <div class="hyperparams" id="hyperparams">
+    <div><label>temperature</label><input id="hp-temperature" type="number" step="0.01" placeholder="1.0"></div>
+    <div><label>top_p</label><input id="hp-top_p" type="number" step="0.01" placeholder="1.0"></div>
+    <div><label>top_k</label><input id="hp-top_k" type="number" step="1" placeholder="-1"></div>
+    <div><label>min_p</label><input id="hp-min_p" type="number" step="0.01" placeholder="0.0"></div>
+    <div><label>max_tokens</label><input id="hp-max_tokens" type="number" step="1" placeholder="(max_model_len)"></div>
+    <div><label>min_tokens</label><input id="hp-min_tokens" type="number" step="1" placeholder="0"></div>
+    <div><label>presence_penalty</label><input id="hp-presence_penalty" type="number" step="0.01" placeholder="0.0"></div>
+    <div><label>frequency_penalty</label><input id="hp-frequency_penalty" type="number" step="0.01" placeholder="0.0"></div>
+    <div><label>repetition_penalty</label><input id="hp-repetition_penalty" type="number" step="0.01" placeholder="1.0"></div>
+    <div><label>n</label><input id="hp-n" type="number" step="1" placeholder="1"></div>
+    <div><label>seed</label><input id="hp-seed" type="number" step="1" placeholder="-1"></div>
+    <div><label>top_logprobs</label><input id="hp-top_logprobs" type="number" step="1" placeholder="0"></div>
+    <div><label>stop <small>(쉼표로 구분)</small></label><input id="hp-stop" type="text"></div>
+    <div><label>tool_choice <small>(auto/none/required/JSON)</small></label><input id="hp-tool_choice" type="text" placeholder="auto"></div>
+    <div style="grid-column:1/-1;"></div>
+    <div><label>stream</label><select id="hp-stream"><option value="">미전송(false)</option><option value="true">true</option><option value="false">false</option></select></div>
+    <div><label>logprobs</label><select id="hp-logprobs"><option value="">미전송(false)</option><option value="true">true</option><option value="false">false</option></select></div>
+    <div><label>ignore_eos</label><select id="hp-ignore_eos"><option value="">미전송(false)</option><option value="true">true</option><option value="false">false</option></select></div>
+    <div><label>skip_special_tokens</label><select id="hp-skip_special_tokens"><option value="">미전송(true)</option><option value="true">true</option><option value="false">false</option></select></div>
+    <div style="grid-column:1/-1;"></div>
+    <div><label>response_format</label><select id="hp-response_format"><option value="">미전송(text)</option><option value="json_object">json_object</option><option value="json_schema">json_schema</option></select></div>
+  </div>
+  <div id="hp-rf-schema" class="hp-rf-schema" hidden>
+    <label>json_schema 값 (JSON 객체)</label>
+    <textarea id="hp-rf-schema-ta" rows="5" spellcheck="false" placeholder='{"name":"my_schema","strict":true,"schema":{"type":"object","properties":{}}}'></textarea>
+    <div class="validation" id="hp-rf-schema-val"></div>
+  </div>
+  </details>
+</fieldset>
+
+<!-- Tools 리스트 편집창 -->
+<fieldset>
+  <legend>Tools</legend>
+  <div id="toolsList">
+    <div class="clear-row"><button id="clearTools">× 전체 삭제</button></div>
+    <p class="empty">— Tool 없음 —</p>
+    <div class="items"></div>
+  </div>
+  <div class="add-row"><button id="addTool">+ Tool 추가</button></div>
+</fieldset>
+
+<!-- Messages 리스트 편집창 -->
+<fieldset>
+  <legend>Messages</legend>
+  <div id="messagesList">
+    <div class="clear-row"><button id="clearMessages">× 전체 삭제</button></div>
+    <p class="empty">— Message 없음 —</p>
+    <div class="items"></div>
+  </div>
+  <div class="add-row"><button id="addMessage">+ Message 추가</button></div>
+</fieldset>
+
+<!-- 전송버튼 -->
+<div class="send-bar">
+  <button id="sendBtn" class="send-btn">SEND</button>
+</div>
+
+<!-- Request Preview (SEND 후 갱신) -->
+<details id="reqPreviewDetails" class="req-preview">
+  <summary>Request Body 보기</summary>
+  <pre id="reqPreviewPre"></pre>
+</details>
+
+<!-- Response -->
+<fieldset>
+  <legend>Response</legend>
+  <div id="response">
+    <p class="empty">아직 응답이 없습니다.</p>
+    <p    class="r-status"       hidden></p>
+    <div class="r-error" hidden><label>Error</label><pre></pre></div>
+    <div class="r-body"  hidden><label>Body</label><pre></pre></div>
+    <details class="r-usage"     hidden><summary>Usage</summary><pre></pre></details>
+    <div class="items"></div>
+  </div>
+</fieldset>
+
+<!-- Templates -->
+<template id="tpl-tool">
+  <div class="item list-item tool-item">
+    <div class="item-head">
+      <div class="left"><b>Tool</b></div>
+      <div class="right">
+        <button data-act="up">↑</button>
+        <button data-act="down">↓</button>
+        <button data-act="del">×</button>
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <label>Name</label>
+        <input class="t-name" type="text" placeholder="get_weather">
+      </div>
+      <div>
+        <label>Description</label>
+        <textarea class="t-desc" rows="2" placeholder="Get the current weather..."></textarea>
+      </div>
+    </div>
+    <label>Parameters (JSON Schema)</label>
+    <textarea class="t-params" rows="8" spellcheck="false"></textarea>
+    <div class="validation"></div>
+  </div>
+</template>
+
+<template id="tpl-tool-call">
+  <div class="tool-call item">
+    <div class="item-head">
+      <div class="left"><b>Tool Call</b></div>
+      <div class="right">
+        <button data-act="up">↑</button>
+        <button data-act="down">↓</button>
+        <button data-act="del">×</button>
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <label>ID</label>
+        <input class="tc-id" type="text">
+      </div>
+      <div>
+        <label>Function Name</label>
+        <input class="tc-name" type="text">
+      </div>
+    </div>
+    <label>Arguments (JSON 문자열)</label>
+    <textarea class="tc-args" rows="3" spellcheck="false"></textarea>
+    <div class="validation"></div>
+  </div>
+</template>
+
+<template id="tpl-message">
+  <div class="item list-item message-item">
+    <div class="item-head">
+      <div class="left">
+        <select class="role-select">
+          <option value="system">system</option>
+          <option value="user">user</option>
+          <option value="assistant">assistant</option>
+          <option value="tool">tool</option>
+        </select>
+      </div>
+      <div class="right">
+        <button data-act="up">↑</button>
+        <button data-act="down">↓</button>
+        <button data-act="del">×</button>
+      </div>
+    </div>
+    <div class="f-reasoning">
+      <label>Reasoning Content (선택)</label>
+      <textarea rows="3" spellcheck="false"></textarea>
+    </div>
+    <div class="f-tool-call-id">
+      <label>Tool Call ID</label>
+      <input type="text" placeholder="call_xxxxx">
+    </div>
+    <div class="f-content">
+      <label>Content</label>
+      <textarea rows="3" spellcheck="false"></textarea>
+    </div>
+    <div class="f-tool-calls">
+      <label>Tool Calls</label>
+      <div class="tc-container">
+        <div class="clear-row"><button class="clear-tc-btn">× 전체 삭제</button></div>
+        <p class="empty">— 없음 —</p>
+        <div class="items"></div>
+      </div>
+      <div class="add-row"><button class="add-tc-btn">+ Tool Call 추가</button></div>
+    </div>
+  </div>
+</template>
+
+<template id="tpl-response-choice">
+  <div class="item list-item response-item">
+    <h3 class="r-title"></h3>
+    <button class="copy-btn">↓ Messages 에 assistant 로 추가</button>
+    <label class="r-reasoning-label" hidden>Reasoning</label>
+    <pre  class="r-reasoning"        hidden></pre>
+    <label class="r-content-label"   hidden>Content</label>
+    <pre  class="r-content"          hidden></pre>
+    <label class="r-tc-label"        hidden>Tool Calls</label>
+    <pre  class="r-tc"               hidden></pre>
+  </div>
+</template>
+
+
+<script>
+/* 서버에서 시작 시 placeholder 를 실제 값으로 치환해서 주입
+   { target: "...", models: ["...", ...] }
+   직접 파일로 열면 치환이 안 되므로 null 로 폴백 */
+try {
+  window.__SERVER_CONFIG__ = __SERVER_CONFIG_JSON__;
+} catch (e) {
+  window.__SERVER_CONFIG__ = null;
+}
+</script>
+
+<script>
+function uid() { return Math.random().toString(36).slice(2, 11); }
+
+function cloneTemplate(id) {
+  return document.getElementById(id).content.cloneNode(true).firstElementChild;
+}
+
+
+const SERVER_MODE = window.__SERVER_CONFIG__ !== null && typeof window.__SERVER_CONFIG__ === 'object';
+
+const $toolsList     = document.getElementById('toolsList');
+const $messagesList  = document.getElementById('messagesList');
+const $toolsItems    = $toolsList.querySelector('.items');
+const $messagesItems = $messagesList.querySelector('.items');
+const $model         = document.getElementById('model');
+const $apiKey        = document.getElementById('apiKey');
+const $sendBtn       = document.getElementById('sendBtn');
+const $response      = document.getElementById('response');
+const $reqPreviewPre = document.getElementById('reqPreviewPre');
+const $ioStatus      = document.getElementById('ioStatus');
+const $targetDisplay = document.getElementById('targetDisplay');
+const $importFile    = document.getElementById('importFile');
+
+const $responseItems = $response.querySelector('.items');
+const $rStatus = $response.querySelector('.r-status');
+const $rError  = $response.querySelector('.r-error');
+const $rBody   = $response.querySelector('.r-body');
+const $rUsage  = $response.querySelector('.r-usage');
+
+function validateJsonSchema(text) {
+  // 정식 JSON Schema 스펙 검증이 아님 — LLM이 작성한 휴리스틱적 검증 메서드
+  if (!text.trim()) {
+    return { ok: false, msg: '✗ 빈 값', cls: 'v-err' };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (e) {
+    return { ok: false, msg: '✗ JSON 파싱 오류: ' + e.message, cls: 'v-err' };
+  }
+  // 루트는 객체여야 한다 (배열/null 금지)
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return { ok: false, msg: '✗ 루트는 객체여야 합니다', cls: 'v-err' };
+  }
+  // type 필드는 없으면 권고 수준의 경고
+  if (parsed.type === undefined) {
+    return { ok: true, msg: '⚠ "type" 필드 권장 (보통 "object")', cls: 'v-warn' };
+  }
+  // type === 'object' 인 경우 properties / required 형태 체크
+  if (parsed.type === 'object') {
+    if (parsed.properties !== undefined) {
+      if (typeof parsed.properties !== 'object' || parsed.properties === null || Array.isArray(parsed.properties)) {
+        return { ok: false, msg: '✗ "properties"는 객체여야 합니다', cls: 'v-err' };
+      }
+      // 각 property 도 객체여야 한다
+      for (const [k, v] of Object.entries(parsed.properties)) {
+        if (typeof v !== 'object' || v === null || Array.isArray(v)) {
+          return { ok: false, msg: `✗ properties.${k} 는 객체여야 합니다`, cls: 'v-err' };
+        }
+      }
+    }
+    if (parsed.required !== undefined) {
+      if (!Array.isArray(parsed.required)) {
+        return { ok: false, msg: '✗ "required"는 배열이어야 합니다', cls: 'v-err' };
+      }
+      // required 가 properties 에 없는 키를 가리키면 경고
+      if (parsed.properties) {
+        const propKeys = Object.keys(parsed.properties);
+        const missing = parsed.required.filter(r => !propKeys.includes(r));
+        if (missing.length > 0) {
+          return { ok: true, msg: '⚠ required 에 properties 외 키: ' + missing.join(', '), cls: 'v-warn' };
+        }
+      }
+    }
+  }
+  return { ok: true, msg: '✓ 구조 OK (정식 JSON Schema 스펙 검증은 아님)', cls: 'v-ok' };
+}
+
+function validateJsonString(text) {
+  if (!text.trim()) {
+    return { ok: false, msg: '⚠ 비어있음', cls: 'v-warn' };
+  }
+  try {
+    JSON.parse(text);
+    return { ok: true, msg: '✓ 유효한 JSON', cls: 'v-ok' };
+  } catch (e) {
+    return { ok: false, msg: '✗ ' + e.message, cls: 'v-err' };
+  }
+}
+
+function checkEmpty(container) {
+  const itemsEl = container.querySelector(':scope > .items') || container;
+  const hasItems = !!itemsEl.querySelector('.item');
+  container.querySelector('p.empty').hidden = hasItems;
+}
+
+function attachItemButtonListeners(div, container, onchange) {
+  div.querySelector('[data-act="up"]').addEventListener('click', () => {
+    const prev = div.previousElementSibling;
+    if (prev) { div.parentNode.insertBefore(div, prev); onchange?.(); }
+  });
+  div.querySelector('[data-act="down"]').addEventListener('click', () => {
+    const next = div.nextElementSibling;
+    if (next) { div.parentNode.insertBefore(next, div); onchange?.(); }
+  });
+  div.querySelector('[data-act="del"]').addEventListener('click', () => {
+    div.remove();
+    checkEmpty(container);
+    onchange?.();
+  });
+}
+
+/* ============================================================================
+ * Tools
+ * ========================================================================== */
+
+function createToolElement(init = {}) {
+  const div = cloneTemplate('tpl-tool');
+  div.querySelector('.t-name').value = init.name || '';
+  div.querySelector('.t-desc').value = init.description || '';
+  const paramsIn = div.querySelector('.t-params');
+  paramsIn.value = init.parameters || '{\n  "type": "object",\n  "properties": {},\n  "required": []\n}';
+  const valEl = div.querySelector('.validation');
+  function updateValidation() {
+    const r = validateJsonSchema(paramsIn.value);
+    valEl.textContent = r.msg;
+    valEl.className = 'validation ' + r.cls;
+  }
+  updateValidation();
+  paramsIn.addEventListener('input', updateValidation);
+  attachItemButtonListeners(div, $toolsList);
+  return div;
+}
+
+function addTool() {
+  $toolsItems.appendChild(createToolElement());
+  checkEmpty($toolsList);
+}
+
+
+/* ============================================================================
+ * Tool Calls (assistant message 내부 자식 항목)
+ * ========================================================================== */
+
+function createToolCallElement(init = {}, container) {
+  const div = cloneTemplate('tpl-tool-call');
+  div.querySelector('.tc-id').value   = init.id || ('call_' + uid());
+  div.querySelector('.tc-name').value = init.name || '';
+  const argsIn = div.querySelector('.tc-args');
+  argsIn.value = init.arguments || '{}';
+  const valEl = div.querySelector('.validation');
+  function updateVal() {
+    const r = validateJsonString(argsIn.value);
+    valEl.textContent = r.msg;
+    valEl.className = 'validation ' + r.cls;
+  }
+  updateVal();
+  argsIn.addEventListener('input', updateVal);
+  attachItemButtonListeners(div, container);
+  return div;
+}
+
+
+/* ============================================================================
+ * Messages
+ * ========================================================================== */
+
+function createMessageElement(init = {}) {
+  const role = init.role || 'user';
+  const div = cloneTemplate('tpl-message');
+
+  const roleSelect  = div.querySelector('.role-select');
+  const fReasoning  = div.querySelector('.f-reasoning');
+  const fTci        = div.querySelector('.f-tool-call-id');
+  const fContent    = div.querySelector('.f-content');
+  const fTc         = div.querySelector('.f-tool-calls');
+  const tcContainer  = div.querySelector('.tc-container');
+  const tcItems      = tcContainer.querySelector('.items');
+
+  roleSelect.value = role;
+  fReasoning.querySelector('textarea').value = init.reasoning_content || '';
+  fTci.querySelector('input').value          = init.tool_call_id || '';
+  fContent.querySelector('textarea').value   = init.content || '';
+
+  if (Array.isArray(init.tool_calls)) {
+    init.tool_calls.forEach(tc => tcItems.appendChild(createToolCallElement(tc, tcContainer)));
+  }
+  checkEmpty(tcContainer);
+
+  div.querySelector('.add-tc-btn').addEventListener('click', () => {
+    tcItems.appendChild(createToolCallElement({}, tcContainer));
+    checkEmpty(tcContainer);
+  });
+  div.querySelector('.clear-tc-btn').addEventListener('click', () => {
+    tcItems.replaceChildren();
+    checkEmpty(tcContainer);
+  });
+
+  function applyRole(r) {
+    fReasoning.hidden = r !== 'assistant';
+    fTci.hidden       = r !== 'tool';
+    fTc.hidden        = r !== 'assistant';
+  }
+  applyRole(role);
+  roleSelect.addEventListener('change', () => applyRole(roleSelect.value));
+
+  attachItemButtonListeners(div, $messagesList);
+  return div;
+}
+
+function addMessage() {
+  const items = $messagesItems.querySelectorAll('.item');
+  let role = 'user';
+  if (items.length === 0) {
+    role = 'system';
+  } else {
+    const lastRole = items[items.length - 1].querySelector('.role-select').value;
+    if (lastRole === 'user' || lastRole === 'tool') role = 'assistant';
+    else if (lastRole === 'assistant')              role = 'user';
+    // system -> user
+  }
+  $messagesItems.appendChild(createMessageElement({ role }));
+  checkEmpty($messagesList);
+}
+
+/* ============================================================================
+ * Request
+ * ========================================================================== */
+function buildRequest() {
+  const base = SERVER_MODE ? '' : (document.getElementById('baseUrl').value.trim().replace(/\/+$/, ''));
+  const url    = base + '/v1/chat/completions';
+  const model  = $model.value.trim();
+  const apiKey = $apiKey.value.trim();
+
+  const body = {};
+  if (model) body.model = model;
+
+  // ----- messages -----
+  body.messages = [...$messagesItems.querySelectorAll('.item')].map(div => {
+    const role = div.querySelector('.role-select').value;
+    if (role === 'system' || role === 'user') {
+      return { role, content: div.querySelector('.f-content textarea').value };
+    }
+    if (role === 'assistant') {
+      const out = { role: 'assistant', content: div.querySelector('.f-content textarea').value };
+      const rc = div.querySelector('.f-reasoning textarea').value;
+      if (rc) out.reasoning_content = rc;
+      const tcs = [...div.querySelectorAll('.tc-container .items .tool-call')].map(tc => ({
+        id: tc.querySelector('.tc-id').value,
+        type: 'function',
+        function: { name: tc.querySelector('.tc-name').value, arguments: tc.querySelector('.tc-args').value },
+      }));
+      if (tcs.length) out.tool_calls = tcs;
+      return out;
+    }
+    if (role === 'tool') {
+      return {
+        role: 'tool',
+        tool_call_id: div.querySelector('.f-tool-call-id input').value,
+        content: div.querySelector('.f-content textarea').value,
+      };
+    }
+  });
+
+  // ----- tools -----
+  const toolDivs = [...$toolsItems.querySelectorAll('.item')];
+  if (toolDivs.length > 0) {
+    body.tools = toolDivs.map(div => {
+      const paramsStr = div.querySelector('.t-params').value;
+      let params;
+      try { params = JSON.parse(paramsStr); } catch { params = paramsStr; }
+      return {
+        type: 'function',
+        function: {
+          name:        div.querySelector('.t-name').value,
+          description: div.querySelector('.t-desc').value,
+          parameters:  params,
+        },
+      };
+    });
+  }
+
+  // ----- hyperparameters -----
+  function hpStr(key) { return document.getElementById('hp-' + key).value; }
+  function hpNum(key)  { const v = hpStr(key); if (v) { const n = Number(v); if (!Number.isNaN(n)) body[key] = n; } }
+  function hpBool(key) { const v = hpStr(key); if (v) body[key] = v === 'true'; }
+
+  hpNum('temperature');
+  hpNum('top_p');
+  hpNum('top_k');
+  hpNum('min_p');
+  hpNum('max_tokens');
+  hpNum('min_tokens');
+  hpNum('presence_penalty');
+  hpNum('frequency_penalty');
+  hpNum('repetition_penalty');
+  hpNum('n');
+  hpNum('seed');
+  hpNum('top_logprobs');
+
+  const stopRaw = hpStr('stop');
+  if (stopRaw) body.stop = stopRaw.split(',').map(s => s.trim()).filter(Boolean);
+
+  const tcRaw = hpStr('tool_choice');
+  if (tcRaw) { try { body.tool_choice = JSON.parse(tcRaw); } catch { body.tool_choice = tcRaw; } }
+
+  const rfVal = hpStr('response_format');
+  if (rfVal === 'json_object') {
+    body.response_format = { type: 'json_object' };
+  } else if (rfVal === 'json_schema') {
+    const schemaText = document.getElementById('hp-rf-schema-ta').value.trim();
+    let schemaObj = null;
+    if (schemaText) { try { schemaObj = JSON.parse(schemaText); } catch {} }
+    body.response_format = { type: 'json_schema', json_schema: schemaObj || {} };
+  }
+
+  hpBool('stream');
+  hpBool('logprobs');
+  hpBool('ignore_eos');
+  hpBool('skip_special_tokens');
+
+  return { url, apiKey, body };
+}
+
+
+/* ============================================================================
+ * Request View
+ * ========================================================================== */
+
+function renderRequestView(body) {
+  $reqPreviewPre.textContent = JSON.stringify(body, null, 2);
+}
+
+
+/* ============================================================================
+ * 전송 / 응답 표시
+ *    - 일반 응답: JSON으로 파싱해서 choice/usage 표시
+ *    - SSE 스트리밍: data: 라인을 누적해서 실시간으로 표시
+ *    - 각 choice / 스트리밍 결과 옆에 "Messages 에 assistant 로 추가" 버튼
+ * ========================================================================== */
+
+// 응답 message 객체를 받아서 새 assistant Message 로 DOM 에 바로 추가한다.
+//   responseMessage = { content?, reasoning_content?, reasoning?, tool_calls? }
+function copyResponseToMessage(responseMessage) {
+  const reasoning = responseMessage.reasoning_content || responseMessage.reasoning || '';
+  const tcs = Array.isArray(responseMessage.tool_calls) ? responseMessage.tool_calls : [];
+  const init = {
+    role: 'assistant',
+    content: responseMessage.content || '',
+    reasoning_content: reasoning,
+    tool_calls: tcs.map(tc => ({
+      id:        tc.id || ('call_' + uid()),
+      name:      (tc.function && tc.function.name) || tc.name || '',
+      arguments: (tc.function && tc.function.arguments) || tc.arguments || '',
+    })),
+  };
+  const newEl = createMessageElement(init);
+  $messagesItems.appendChild(newEl);
+  checkEmpty($messagesList);
+  newEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+
+function resetResponse() {
+  $responseItems.replaceChildren();
+  $response.querySelector('.empty').hidden = false;
+  [$rStatus, $rError, $rBody, $rUsage].forEach(el => { el.hidden = true; });
+}
+
+async function sendRequest() {
+  const { url, apiKey, body } = buildRequest();
+
+  if (!url) {
+    resetResponse();
+    $response.querySelector('.empty').hidden = true;
+    $rStatus.hidden = false;
+    $rStatus.className = 'r-status v-err';
+    $rStatus.textContent = '✗ URL을 입력해주세요.';
+    return;
+  }
+
+  $sendBtn.disabled = true;
+  $sendBtn.textContent = 'SENDING...';
+  resetResponse();
+  $response.querySelector('.empty').hidden = true;
+  $rStatus.hidden = false;
+  $rStatus.className = 'r-status';
+  $rStatus.textContent = '◌ 요청 전송 중...';
+
+  const headers = { 'Content-Type': 'application/json' };
+  if (apiKey) headers['Authorization'] = 'Bearer ' + apiKey;
+
+  const t0 = performance.now();
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+    });
+
+    const contentType = res.headers.get('content-type') || '';
+    const isStream = body.stream === true && res.ok && res.body && contentType.includes('text/event-stream');
+
+    if (isStream) {
+      await renderStreamingResponse(res, t0);
+    } else {
+      await renderNormalResponse(res, t0);
+    }
+
+  } catch (e) {
+    $rStatus.className = 'r-status v-err';
+    $rStatus.textContent = '✗ 요청 실패: ' + e.message + ' (CORS 또는 네트워크 오류일 수 있습니다)';
+  } finally {
+    $sendBtn.disabled = false;
+    sendBtn.textContent = 'SEND';
+    renderRequestView(body);
+  }
+}
+
+// ----- 일반 (non-streaming) 응답 -----
+async function renderNormalResponse(res, t0) {
+  const text = await res.text();
+  const ms   = Math.round(performance.now() - t0);
+
+  let json = null;
+  try { json = JSON.parse(text); } catch {}
+
+  $rStatus.hidden    = false;
+  $rStatus.className = 'r-status ' + (res.ok ? 'v-ok' : 'v-err');
+  $rStatus.textContent = `${res.ok ? '✓' : '✗'} ${res.status} ${res.statusText} · ${ms}ms`;
+
+  if (json && Array.isArray(json.choices)) {
+    json.choices.forEach((choice, ci) => {
+      const msg = choice.message || {};
+      const div = cloneTemplate('tpl-response-choice');
+
+      div.querySelector('.r-title').textContent =
+        `Choice #${ci} (finish_reason: ${choice.finish_reason || 'unknown'})`;
+      div.querySelector('.copy-btn').addEventListener('click', () => copyResponseToMessage(msg));
+
+      const reasoning = msg.reasoning_content || msg.reasoning;
+      if (reasoning) {
+        div.querySelector('.r-reasoning-label').hidden = false;
+        div.querySelector('.r-reasoning').hidden = false;
+        div.querySelector('.r-reasoning').textContent = reasoning;
+      }
+      if (msg.content) {
+        div.querySelector('.r-content-label').hidden = false;
+        div.querySelector('.r-content').hidden = false;
+        div.querySelector('.r-content').textContent = msg.content;
+      }
+      if (msg.tool_calls && msg.tool_calls.length > 0) {
+        div.querySelector('.r-tc-label').hidden = false;
+        div.querySelector('.r-tc').hidden = false;
+        div.querySelector('.r-tc').textContent = JSON.stringify(msg.tool_calls, null, 2);
+      }
+
+      $responseItems.appendChild(div);
+    });
+
+    if (json.usage) {
+      $rUsage.hidden = false;
+      $rUsage.querySelector('pre').textContent = JSON.stringify(json.usage, null, 2);
+    }
+
+  } else if (json && json.error) {
+    $rError.hidden = false;
+    $rError.querySelector('pre').textContent = JSON.stringify(json.error, null, 2);
+
+  } else {
+    $rBody.hidden = false;
+    $rBody.querySelector('pre').textContent = text;
+  }
+}
+
+// ----- 스트리밍 (SSE) 응답 -----
+//
+// vLLM 의 stream 응답은 다음과 같은 형태로 들어온다:
+//   data: {"choices":[{"delta":{"content":"안"}, ...}], ...}
+//   data: {"choices":[{"delta":{"content":"녕"}, ...}], ...}
+//   ...
+//   data: [DONE]
+//
+// delta 들을 누적해서 content / reasoning / tool_calls 를 만들고,
+// 응답 도중에도 화면에 실시간으로 보여준다.
+function showInChoice(div, cls, labelCls, text) {
+  if (!text) return;
+  div.querySelector(labelCls).hidden = false;
+  const pre = div.querySelector(cls);
+  pre.hidden = false;
+  pre.textContent = text;
+}
+
+async function renderStreamingResponse(res, t0) {
+  const acc = { content: '', reasoning: '', tool_calls: [], finish: null, usage: null };
+
+  $rStatus.hidden    = false;
+  $rStatus.className = 'r-status v-ok';
+  $rStatus.textContent = `◌ ${res.status} ${res.statusText} (streaming) · 0ms`;
+
+  const div = cloneTemplate('tpl-response-choice');
+  div.querySelector('.r-title').textContent = 'Choice #0 (streaming...)';
+  const copyBtn = div.querySelector('.copy-btn');
+  copyBtn.disabled = true;
+  copyBtn.textContent = '↓ Messages 에 추가 (스트리밍 완료 후 활성화)';
+  $responseItems.appendChild(div);
+
+  const reader  = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+
+    const lines = buffer.split('\n');
+    buffer = lines.pop();
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('data:')) continue;
+      const data = trimmed.slice(5).trim();
+      if (data === '[DONE]') continue;
+
+      try {
+        mergeStreamChunk(JSON.parse(data), acc);
+      } catch {
+        // 깨진 chunk 는 그냥 무시
+      }
+    }
+
+    showInChoice(div, '.r-reasoning', '.r-reasoning-label', acc.reasoning);
+    showInChoice(div, '.r-content',   '.r-content-label',   acc.content);
+    showInChoice(div, '.r-tc',        '.r-tc-label',
+      acc.tool_calls.length > 0 ? JSON.stringify(acc.tool_calls, null, 2) : '');
+    $rStatus.textContent =
+      `◌ ${res.status} ${res.statusText} (streaming) · ${Math.round(performance.now() - t0)}ms`;
+  }
+
+  const ms = Math.round(performance.now() - t0);
+  $rStatus.textContent =
+    `✓ ${res.status} ${res.statusText} · finish: ${acc.finish || 'unknown'} · ${ms}ms`;
+  div.querySelector('.r-title').textContent =
+    `Choice #0 (finish_reason: ${acc.finish || 'unknown'})`;
+
+  copyBtn.disabled = false;
+  copyBtn.textContent = '↓ Messages 에 assistant 로 추가';
+  copyBtn.addEventListener('click', () => copyResponseToMessage({
+    content: acc.content,
+    reasoning_content: acc.reasoning,
+    tool_calls: acc.tool_calls,
+  }));
+
+  if (acc.usage) {
+    $rUsage.hidden = false;
+    $rUsage.querySelector('pre').textContent = JSON.stringify(acc.usage, null, 2);
+  }
+}
+
+// 한 stream chunk 를 누적기에 합치는 로직
+function mergeStreamChunk(chunk, acc) {
+  if (chunk.choices && chunk.choices[0]) {
+    const ch = chunk.choices[0];
+    const d  = ch.delta || {};
+
+    if (d.content)           acc.content   += d.content;
+    if (d.reasoning_content) acc.reasoning += d.reasoning_content;
+    if (d.reasoning)         acc.reasoning += d.reasoning;
+
+    if (d.tool_calls) {
+      // delta.tool_calls[i] 에는 .index 로 어느 자리의 tool_call 인지 알려줌
+      for (const tc of d.tool_calls) {
+        const i = tc.index !== undefined ? tc.index : 0;
+        if (!acc.tool_calls[i]) {
+          acc.tool_calls[i] = { id: '', type: 'function', function: { name: '', arguments: '' } };
+        }
+        if (tc.id) acc.tool_calls[i].id = tc.id;
+        if (tc.function) {
+          if (tc.function.name)      acc.tool_calls[i].function.name      = tc.function.name;
+          if (tc.function.arguments) acc.tool_calls[i].function.arguments += tc.function.arguments;
+        }
+      }
+    }
+    if (ch.finish_reason) acc.finish = ch.finish_reason;
+  }
+  if (chunk.usage) acc.usage = chunk.usage;
+}
+
+
+/* ============================================================================
+ * 9. Import / Export
+ *    - Export: 현재 입력 상태를 chat completion request body 형태의 JSON 파일로
+ *              다운로드.
+ *    - Import: 사용자가 고른 JSON 파일을 읽어, chat completion request 형태인지
+ *              검증한 뒤 state 에 반영. 검증 실패 시 기존 state 는 건드리지 않고
+ *              에러 메시지만 띄움.
+ * ========================================================================== */
+
+// 툴바 옆에 짧은 상태 메시지를 띄운다. type: 'ok'|'err'|'warn'|''
+//   - 일정 시간 뒤에 자동으로 사라짐 (단, 그 사이 메시지가 바뀌었으면 그대로 둠)
+function renderIoStatus(msg, type) {
+  $ioStatus.textContent = msg;
+  $ioStatus.className = type ? 'v-' + type : '';
+  if (msg) {
+    const ms = type === 'err' ? 8000 : 4000;
+    setTimeout(() => {
+      if ($ioStatus.textContent === msg) {
+        $ioStatus.textContent = '';
+        $ioStatus.className = '';
+      }
+    }, ms);
+  }
+}
+
+// state → request body JSON 파일 다운로드.
+// Blob + <a download> 트릭 (브라우저 표준, 외부 의존성 없음).
+function exportRequestJson() {
+  const { body } = buildRequest();
+  const json = JSON.stringify(body, null, 2);
+
+  const blob = new Blob([json], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  // 파일명: chat-request-YYYYMMDDHHMMSS.json
+  const ts = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
+  a.download = `chat-request-${ts}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+
+  renderIoStatus('✓ Export 완료', 'ok');
+}
+
+// 파일 → JSON 파싱 → 검증 → state 적용.
+// 어느 단계든 실패하면 state 는 그대로 두고 에러만 표시.
+function importRequestJson(file) {
+  const reader = new FileReader();
+  reader.onerror = () => renderIoStatus('✗ 파일 읽기 실패', 'err');
+  reader.onload  = () => {
+    let parsed;
+    try {
+      parsed = JSON.parse(reader.result);
+    } catch (e) {
+      renderIoStatus('✗ JSON 파싱 실패: ' + e.message, 'err');
+      return;
+    }
+    const result = parseImportedRequest(parsed);
+    if (!result.ok) {
+      renderIoStatus('✗ 검증 실패: ' + result.error, 'err');
+      return;
+    }
+    const note = renderImportedRequest(result.value);
+    const v = result.value;
+    renderIoStatus(
+      `✓ Import 완료 (messages ${v.messages.length}` +
+      (v.tools.length ? `, tools ${v.tools.length}` : '') +
+      (note || '') + ')',
+      note ? 'warn' : 'ok');
+  };
+  reader.readAsText(file);
+}
+
+// chat completion request 형태인지 검증하면서 내부 state 형태로 변환.
+// 반환:
+//   { ok: true, value: {model, messages, tools, hyperparams} }
+//   { ok: false, error: '에러 메시지' }
+//
+// 외부 형태 → 내부 형태 변환 규칙:
+//   - assistant.tool_calls[].function.{name,arguments} → 평면 {name, arguments}
+//   - tool 의 fn.parameters (객체) → JSON.stringify 한 문자열
+//   - content 가 multi-modal 배열인 경우 JSON.stringify 해서 텍스트로 보여줌
+//     (이 앱은 텍스트 content 만 편집 가능)
+function parseImportedRequest(obj) {
+  if (typeof obj !== 'object' || obj === null || Array.isArray(obj)) {
+    return { ok: false, error: '루트가 객체가 아닙니다' };
+  }
+  if (!Array.isArray(obj.messages)) {
+    return { ok: false, error: '"messages" 배열이 없습니다' };
+  }
+
+  const contentToString = (c) => {
+    if (typeof c === 'string') return c;
+    if (c == null) return '';
+    return JSON.stringify(c);  // multi-modal 등은 그대로 직렬화
+  };
+
+  // ----- messages -----
+  const messages = [];
+  for (let i = 0; i < obj.messages.length; i++) {
+    const m = obj.messages[i];
+    if (typeof m !== 'object' || m === null) {
+      return { ok: false, error: `messages[${i}] 가 객체가 아닙니다` };
+    }
+    if (!['system', 'user', 'assistant', 'tool'].includes(m.role)) {
+      return { ok: false, error: `messages[${i}].role 이 유효하지 않음 (${m.role})` };
+    }
+
+    const internal = { id: uid(), role: m.role };
+
+    if (m.role === 'system' || m.role === 'user') {
+      internal.content = contentToString(m.content);
+
+    } else if (m.role === 'assistant') {
+      internal.content = contentToString(m.content);
+      // reasoning_content 가 정식, reasoning 키도 받아준다
+      internal.reasoning_content =
+        typeof m.reasoning_content === 'string' ? m.reasoning_content :
+        typeof m.reasoning         === 'string' ? m.reasoning : '';
+      internal.tool_calls = [];
+      if (Array.isArray(m.tool_calls)) {
+        for (let j = 0; j < m.tool_calls.length; j++) {
+          const tc = m.tool_calls[j];
+          if (typeof tc !== 'object' || tc === null) {
+            return { ok: false, error: `messages[${i}].tool_calls[${j}] 가 객체가 아닙니다` };
+          }
+          // 표준 형태: {id, type:'function', function:{name, arguments}}
+          // 평면 형태도 허용: {id, name, arguments}
+          const fnName = (tc.function && tc.function.name) || tc.name || '';
+          const fnArgs = (tc.function && tc.function.arguments);
+          internal.tool_calls.push({
+            id:   tc.id || ('call_' + uid()),
+            name: fnName,
+            arguments:
+              typeof fnArgs === 'string'        ? fnArgs :
+              typeof tc.arguments === 'string' ? tc.arguments : '',
+          });
+        }
+      }
+
+    } else if (m.role === 'tool') {
+      internal.tool_call_id = typeof m.tool_call_id === 'string' ? m.tool_call_id : '';
+      internal.content      = contentToString(m.content);
+    }
+    messages.push(internal);
+  }
+
+  // ----- tools -----
+  const tools = [];
+  if (obj.tools !== undefined) {
+    if (!Array.isArray(obj.tools)) {
+      return { ok: false, error: '"tools" 가 배열이 아닙니다' };
+    }
+    for (let i = 0; i < obj.tools.length; i++) {
+      const t = obj.tools[i];
+      if (typeof t !== 'object' || t === null) {
+        return { ok: false, error: `tools[${i}] 가 객체가 아닙니다` };
+      }
+      // 표준: {type:'function', function:{name, description, parameters}}
+      // 평면 호환: {name, description, parameters}
+      const fn = t.function || t;
+      tools.push({
+        id: uid(),
+        name:        typeof fn.name        === 'string' ? fn.name        : '',
+        description: typeof fn.description === 'string' ? fn.description : '',
+        parameters:  fn.parameters !== undefined
+          ? JSON.stringify(fn.parameters, null, 2)
+          : '{\n  "type": "object",\n  "properties": {},\n  "required": []\n}',
+      });
+    }
+  }
+
+  // ----- hyperparam 들 -----
+  const hyperparams = {};
+  function importNum(key)  { if (obj[key] != null) hyperparams[key] = String(obj[key]); }
+  function importBool(key) { if (obj[key] != null) hyperparams[key] = obj[key] ? 'true' : 'false'; }
+
+  importNum('temperature');
+  importNum('top_p');
+  importNum('top_k');
+  importNum('min_p');
+  importNum('max_tokens');
+  importNum('min_tokens');
+  importNum('presence_penalty');
+  importNum('frequency_penalty');
+  importNum('repetition_penalty');
+  importNum('n');
+  importNum('seed');
+  importNum('top_logprobs');
+
+  if (obj.stop != null)
+    hyperparams.stop = Array.isArray(obj.stop) ? obj.stop.join(', ') : String(obj.stop);
+  if (obj.tool_choice != null)
+    hyperparams.tool_choice = typeof obj.tool_choice === 'string' ? obj.tool_choice : JSON.stringify(obj.tool_choice);
+  if (obj.response_format != null) {
+    const rf = obj.response_format;
+    const rfType = (typeof rf === 'object' && rf !== null) ? (rf.type || '') : '';
+    hyperparams.response_format = (rfType === 'json_object' || rfType === 'json_schema') ? rfType : '';
+    if (rfType === 'json_schema' && rf.json_schema != null) {
+      hyperparams.response_format_schema = JSON.stringify(rf.json_schema, null, 2);
+    }
+  }
+
+  importBool('stream');
+  importBool('logprobs');
+  importBool('ignore_eos');
+  importBool('skip_special_tokens');
+
+  return {
+    ok: true,
+    value: {
+      model: typeof obj.model === 'string' ? obj.model : '',
+      messages, tools, hyperparams,
+    },
+  };
+}
+
+// 검증 통과한 import 값을 DOM 에 반영.
+// model 은 서버 제공 목록 안에 있을 때만 적용. 없으면 무시하고 호출자에게 알림 문자열 반환.
+function renderImportedRequest(v) {
+  let modelNote = '';
+  if (v.model) {
+    const available = Array.from($model.options).map(o => o.value);
+    if (available.includes(v.model)) {
+      $model.value = v.model;
+    } else {
+      modelNote = `, 모델 "${v.model}" 은 서버에 없어 무시`;
+    }
+  }
+
+  $toolsItems.replaceChildren();
+  v.tools.forEach(t => $toolsItems.appendChild(createToolElement(t)));
+  checkEmpty($toolsList);
+
+  $messagesItems.replaceChildren();
+  v.messages.forEach(m => $messagesItems.appendChild(createMessageElement(m)));
+  checkEmpty($messagesList);
+
+  const hp = v.hyperparams;
+  function setHp(key) { document.getElementById('hp-' + key).value = hp[key] || ''; }
+
+  setHp('temperature');
+  setHp('top_p');
+  setHp('top_k');
+  setHp('min_p');
+  setHp('max_tokens');
+  setHp('min_tokens');
+  setHp('presence_penalty');
+  setHp('frequency_penalty');
+  setHp('repetition_penalty');
+  setHp('n');
+  setHp('seed');
+  setHp('top_logprobs');
+  setHp('stop');
+  setHp('tool_choice');
+  document.getElementById('hp-response_format').value = hp.response_format || '';
+  const rfSchemaDiv = document.getElementById('hp-rf-schema');
+  const rfSchemaTa  = document.getElementById('hp-rf-schema-ta');
+  rfSchemaDiv.hidden = (hp.response_format !== 'json_schema');
+  rfSchemaTa.value   = hp.response_format_schema || '';
+  validateRfSchema();
+  setHp('stream');
+  setHp('logprobs');
+  setHp('ignore_eos');
+  setHp('skip_special_tokens');
+
+  return modelNote;
+}
+
+
+/* ============================================================================
+ * 10. 초기 실행
+ * ========================================================================== */
+
+function populateModels(models) {
+  $model.innerHTML = '';
+  if (models.length === 0) {
+    const opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = '-';
+    $model.appendChild(opt);
+  } else {
+    models.forEach(m => {
+      const opt = document.createElement('option');
+      opt.value = m;
+      opt.textContent = m;
+      $model.appendChild(opt);
+    });
+    $model.value = models[0];
+  }
+}
+
+// 서버 모드 / 로컬 모드에 따라 Endpoint UI 초기화
+(function initEndpoint() {
+  if (SERVER_MODE) {
+    document.getElementById('ep-server').hidden = false;
+    document.getElementById('ep-apikey').hidden = true;
+    $targetDisplay.textContent = window.__SERVER_CONFIG__.target;
+    document.getElementById('versionDisplay').textContent = window.__SERVER_CONFIG__.version || 'unknown';
+    populateModels(window.__SERVER_CONFIG__.models);
+  } else {
+    document.getElementById('ep-local').hidden = false;
+    document.getElementById('connectBtn').addEventListener('click', connectToVllm);
+    populateModels([]);
+  }
+})();
+
+async function connectToVllm() {
+  const base = document.getElementById('baseUrl').value.trim().replace(/\/+$/, '');
+  const status = document.getElementById('connectStatus');
+  if (!base) {
+    status.className = 'v-err';
+    status.textContent = 'URL을 입력하세요.';
+    return;
+  }
+  status.className = '';
+  status.textContent = '연결 중...';
+  document.getElementById('connectBtn').disabled = true;
+  try {
+    const apiKey = $apiKey.value.trim();
+    const headers = apiKey ? { 'Authorization': 'Bearer ' + apiKey } : {};
+    const [modelsRes, versionRes] = await Promise.all([
+      fetch(base + '/v1/models', { headers }),
+      fetch(base + '/version', { headers }).catch(() => null),
+    ]);
+    if (!modelsRes.ok) throw new Error(`${modelsRes.status} ${modelsRes.statusText}`);
+    const data = await modelsRes.json();
+    const models = (data.data || []).map(m => m.id).filter(Boolean);
+    if (models.length === 0) throw new Error('모델 목록이 비어 있습니다');
+    populateModels(models);
+    let version = '';
+    if (versionRes && versionRes.ok) {
+      const vdata = await versionRes.json().catch(() => null);
+      version = (vdata && typeof vdata.version === 'string') ? vdata.version : '';
+    }
+    status.className = 'v-ok';
+    status.textContent = `✓ ${models.length}개 모델 · vLLM ${version || 'unknown'}`;
+  } catch (e) {
+    status.className = 'v-err';
+    status.textContent = '✗ ' + e.message;
+  } finally {
+    document.getElementById('connectBtn').disabled = false;
+  }
+}
+
+// response_format select ↔ json_schema textarea
+function validateRfSchema() {
+  const ta  = document.getElementById('hp-rf-schema-ta');
+  const val = document.getElementById('hp-rf-schema-val');
+  if (!ta.value.trim()) { val.textContent = ''; val.className = 'validation'; return; }
+  const r = validateJsonString(ta.value);
+  val.textContent = r.msg;
+  val.className   = 'validation ' + r.cls;
+}
+document.getElementById('hp-response_format').addEventListener('change', function () {
+  document.getElementById('hp-rf-schema').hidden = this.value !== 'json_schema';
+});
+document.getElementById('hp-rf-schema-ta').addEventListener('input', validateRfSchema);
+
+document.getElementById('addTool')      .addEventListener('click', addTool);
+document.getElementById('addMessage')   .addEventListener('click', addMessage);
+document.getElementById('clearTools')   .addEventListener('click', () => {
+  $toolsItems.replaceChildren();
+  checkEmpty($toolsList);
+});
+document.getElementById('clearMessages').addEventListener('click', () => {
+  $messagesItems.replaceChildren();
+  checkEmpty($messagesList);
+});
+$sendBtn.addEventListener('click', sendRequest);
+
+document.getElementById('exportBtn').addEventListener('click', exportRequestJson);
+document.getElementById('importBtn').addEventListener('click', () => {
+  $importFile.value = '';
+  $importFile.click();
+});
+$importFile.addEventListener('change', (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (file) importRequestJson(file);
+});
+
+// 초기 빈 상태 표시 + 시작 메시지 두 개
+$messagesItems.appendChild(createMessageElement({ role: 'system' }));
+$messagesItems.appendChild(createMessageElement({ role: 'user' }));
+checkEmpty($messagesList);
+</script>
+
+</body>
+</html>
