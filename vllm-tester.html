@@ -528,7 +528,7 @@ function createMessageElement(init = {}) {
 }
 
 function addMessage() {
-  const items = $messagesItems.querySelectorAll('.message-item');
+  const items = $messagesItems.querySelectorAll(':scope > .item');
   let role = 'user';
   if (items.length === 0) {
     role = 'system';
@@ -555,7 +555,7 @@ function buildRequest() {
   if (model) body.model = model;
 
   // ----- messages -----
-  body.messages = [...$messagesItems.querySelectorAll('.message-item')].map(div => {
+  body.messages = [...$messagesItems.querySelectorAll(':scope > .item')].map(div => {
     const role = div.querySelector('.role-select').value;
     if (role === 'system' || role === 'user') {
       return { role, content: div.querySelector('.f-content textarea').value };
@@ -564,7 +564,7 @@ function buildRequest() {
       const out = { role: 'assistant', content: div.querySelector('.f-content textarea').value };
       const rc = div.querySelector('.f-reasoning textarea').value;
       if (rc) out.reasoning_content = rc;
-      const tcs = [...div.querySelectorAll('.tc-container .items .tool-call')].map(tc => ({
+      const tcs = [...div.querySelectorAll(':scope > .tc-container > .items > .item')].map(tc => ({
         id: tc.querySelector('.tc-id').value,
         type: 'function',
         function: { name: tc.querySelector('.tc-name').value, arguments: tc.querySelector('.tc-args').value },
