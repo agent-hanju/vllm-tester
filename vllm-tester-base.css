@@ -1,0 +1,107 @@
+body {
+  font-family: sans-serif;
+  font-size: 14px;
+  max-width: 1000px;
+  margin: 20px auto;
+  padding: 0 16px;
+  color: #222;
+}
+h1 { font-size: 16px; margin: 0 0 14px; }
+
+fieldset { border: 1px solid #999; padding: 10px 12px; margin-bottom: 14px; }
+legend { padding: 0 6px; font-weight: bold; }
+
+label {
+  display: block;
+  font-size: 12px;
+  color: #555;
+  margin: 8px 0 2px;
+}
+input, textarea, select {
+  font-family: monospace;
+  font-size: 13px;
+  padding: 3px 5px;
+  border: 1px solid #aaa;
+  width: 100%;
+  box-sizing: border-box;
+}
+textarea { resize: vertical; min-height: 48px; }
+
+button {
+  font-family: inherit;
+  font-size: 12px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+/* 툴바 */
+.toolbar { display: flex; align-items: center; gap: 8px; margin: 0 0 14px; }
+.io-status { font-size: 12px; margin-left: 4px; }
+
+/* Endpoint */
+.ep-server { font-size: 12px; color: #555; margin: 4px 0 8px; }
+.ep-target { background: #f0f0f0; padding: 1px 4px; }
+.ep-connect-row { align-items: flex-end; margin-bottom: 8px; }
+.ep-connect-actions { display: flex; align-items: flex-end; gap: 8px; padding-bottom: 1px; }
+.ep-connect-btn { padding: 4px 14px; }
+.ep-connect-status { font-size: 12px; }
+
+/* 리스트 아이템 */
+.list-item {
+  border: 1px solid #ccc;
+  padding: 8px 10px;
+  margin: 8px 0;
+  background: #f9f9f9;
+}
+.tool-call {
+  border: 1px solid #ccc;
+  padding: 6px 8px;
+  margin: 6px 0;
+  background: #f3f3f3;
+}
+.item-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+  gap: 8px;
+}
+.item-head .left { display: flex; align-items: center; gap: 8px; }
+.item-head .right button { padding: 2px 6px; }
+
+.row { display: grid; gap: 8px; grid-template-columns: 1fr 1fr; }
+
+.hyperparams {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+.hp-rf-schema { margin-top: 8px; }
+.hp-summary { font-size: 12px; color: #777; }
+
+.add-row { text-align: right; margin-top: 6px; }
+
+.validation { font-size: 11px; margin-top: 3px; }
+.v-ok   { color: green; }
+.v-err  { color: #c00; }
+.v-warn { color: #b80; }
+
+pre {
+  background: #f5f5f5;
+  border: 1px solid #ddd;
+  padding: 6px 8px;
+  margin: 4px 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+}
+
+.req-preview { margin: 10px 0; }
+
+.empty { color: #999; font-style: italic; padding: 4px; }
+.clear-row { text-align: left; margin-bottom: 4px; }
+details summary { cursor: pointer; color: #555; }
+
+.role-select { width: auto; }
+.copy-btn { margin: 4px 0 8px; }
