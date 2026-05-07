@@ -3,7 +3,6 @@ __pycache__/
 .env
 .claude
 .vscode
-CLAUDE.md
 node_modules/
 package-lock.json
 npm-debug.log*
