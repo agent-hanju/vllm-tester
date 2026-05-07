@@ -1,0 +1,27 @@
+{
+  "name": "vllm-tester",
+  "version": "1.0.0",
+  "description": "vLLM 서버에 대한 Chat Completions 요청을 브라우저에서 직접 테스트하는 단일 페이지 도구.   Python 표준 라이브러리만 사용",
+  "main": "index.js",
+  "scripts": {
+    "test": "playwright test",
+    "test:ui": "playwright test --ui",
+    "test:headed": "playwright test --headed",
+    "test:report": "playwright show-report"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agent-hanju/vllm-tester.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/agent-hanju/vllm-tester/issues"
+  },
+  "homepage": "https://github.com/agent-hanju/vllm-tester#readme",
+  "devDependencies": {
+    "@playwright/test": "^1.59.1"
+  }
+}
