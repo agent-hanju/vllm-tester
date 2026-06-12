@@ -35,6 +35,7 @@ import http.client
 import http.server
 import json
 import logging
+import mimetypes
 import os
 import socketserver
 import sys
@@ -177,12 +178,24 @@ HOP_BY_HOP = {
 
 _PROXY_EXTRA = frozenset({'/tokenize', '/detokenize'})
 _CHUNK_SIZE = 1024
+_STATIC_EXTENSIONS = frozenset({
+    '.css', '.js', '.mjs',
+    '.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.ico',
+    '.woff', '.woff2', '.ttf', '.otf',
+    '.map',
+})
 
 
-def make_handler(target_url: str, html_bytes: bytes, timeout: int = 600) -> type:
+def make_handler(
+    target_url: str,
+    html_bytes: bytes,
+    static_dir: str,
+    timeout: int = 600,
+) -> type:
     """target / HTML 을 캡처한 BaseHTTPRequestHandler 서브클래스를 만들어 반환."""
     scheme, target_host, target_port = _parse_target(target_url)
     target_https: bool = (scheme == 'https')
+    static_root = os.path.abspath(static_dir)
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
@@ -195,6 +208,52 @@ def make_handler(target_url: str, html_bytes: bytes, timeout: int = 600) -> type
             self.send_header('Cache-Control', 'no-store')
             self.end_headers()
             self.wfile.write(html_bytes)
+
+        def _serve_static(self, path: str) -> bool:
+            parsed_path = urllib.parse.unquote(path).lstrip('/')
+            if not parsed_path or '\\' in parsed_path:
+                return False
+            normalized_path = os.path.normpath(parsed_path)
+            path_parts = normalized_path.split(os.sep)
+            if (
+                normalized_path.startswith('..' + os.sep)
+                or normalized_path == '..'
+                or any(part.startswith('.') for part in path_parts)
+            ):
+                return False
+
+            ext = os.path.splitext(normalized_path)[1].lower()
+            if ext not in _STATIC_EXTENSIONS:
+                return False
+
+            file_path = os.path.abspath(os.path.join(static_root, normalized_path))
+            if os.path.commonpath([static_root, file_path]) != static_root:
+                return False
+            if not os.path.isfile(file_path):
+                return False
+
+            try:
+                with open(file_path, 'rb') as f:
+                    body = f.read()
+            except OSError as e:
+                logger.warning("static 파일 읽기 실패 [%s]: %s", file_path, e)
+                self.send_response(500)
+                self.send_header('Content-Type', 'text/plain; charset=utf-8')
+                self.end_headers()
+                self.wfile.write(b'Internal Server Error\n')
+                return True
+
+            content_type = mimetypes.guess_type(file_path)[0] or 'application/octet-stream'
+            if content_type.startswith('text/') or ext in ('.js', '.mjs', '.svg', '.map'):
+                content_type += '; charset=utf-8'
+
+            self.send_response(200)
+            self.send_header('Content-Type', content_type)
+            self.send_header('Content-Length', str(len(body)))
+            self.send_header('Cache-Control', 'no-store')
+            self.end_headers()
+            self.wfile.write(body)
+            return True
 
         def _proxy(self) -> None:
             length = int(self.headers.get('Content-Length', 0))
@@ -251,6 +310,8 @@ def make_handler(target_url: str, html_bytes: bytes, timeout: int = 600) -> type
                 self._serve_html()
             elif self._is_proxy_path(path):
                 self._proxy()
+            elif self._serve_static(path):
+                return
             else:
                 self.send_response(404)
                 self.send_header('Content-Type', 'text/plain; charset=utf-8')
@@ -342,7 +403,13 @@ def main() -> None:
     bind_display = args.bind if args.bind else 'localhost'
     logger.info("listen: http://%s:%d  (Ctrl+C 로 종료)", bind_display, args.port)
 
-    handler_cls = make_handler(args.target, html_bytes, timeout=args.timeout)
+    static_dir = os.path.dirname(os.path.abspath(args.html))
+    handler_cls = make_handler(
+        args.target,
+        html_bytes,
+        static_dir=static_dir,
+        timeout=args.timeout,
+    )
     try:
         ThreadingServer((args.bind, args.port), handler_cls).serve_forever()
     except KeyboardInterrupt:
