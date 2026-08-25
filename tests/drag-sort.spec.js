@@ -120,25 +120,25 @@ test.describe('Drag & Drop Sorting — Messages', () => {
   });
 
   test('Message up/down buttons reorder correctly', async ({ page }) => {
-    await page.locator('#messagesList .items .item:nth-child(1) .f-content textarea').fill('SysMsg');
-    await page.locator('#messagesList .items .item:nth-child(2) .f-content textarea').fill('UserMsg');
+    await page.locator('#messagesList .items .item:nth-child(1) .content-string').fill('SysMsg');
+    await page.locator('#messagesList .items .item:nth-child(2) .content-string').fill('UserMsg');
 
     await page.locator('#messagesList .items .item:nth-child(1) [data-act="down"]').click();
 
-    const contents = page.locator('#messagesList .items .item .f-content textarea');
+    const contents = page.locator('#messagesList .items .item .content-string');
     await expect(contents.nth(0)).toHaveValue('UserMsg');
     await expect(contents.nth(1)).toHaveValue('SysMsg');
   });
 
   test('Drag: first message moves after second', async ({ page }) => {
-    await page.locator('#messagesList .items .item:nth-child(1) .f-content textarea').fill('First');
-    await page.locator('#messagesList .items .item:nth-child(2) .f-content textarea').fill('Second');
+    await page.locator('#messagesList .items .item:nth-child(1) .content-string').fill('First');
+    await page.locator('#messagesList .items .item:nth-child(2) .content-string').fill('Second');
 
     const src  = page.locator('#messagesList .items .item:nth-child(1)');
     const dest = page.locator('#messagesList .items .item:nth-child(2)');
     await dragTo(page, src, dest);
 
-    const contents = page.locator('#messagesList .items .item .f-content textarea');
+    const contents = page.locator('#messagesList .items .item .content-string');
     await expect(contents.nth(0)).toHaveValue('Second');
     await expect(contents.nth(1)).toHaveValue('First');
   });
@@ -159,5 +159,39 @@ test.describe('Drag & Drop Sorting — Messages', () => {
 
     // Parent message should still be in original position (use direct child selector)
     await expect(page.locator('#messagesList > .items > .item')).toHaveCount(2);
+  });
+});
+
+test.describe('Drag & Drop Sorting — Content Parts', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/vllm-tester.html');
+    const message = page.locator('#messagesList > .items > .message-item').nth(1);
+    await message.locator('.content-format').selectOption('parts');
+    await message.locator('.cp-text').fill('first');
+    await message.locator('[data-part="text"]').click();
+    await message.locator('.content-part[data-part-kind="text"]').nth(1).locator('.cp-text').fill('second');
+  });
+
+  test('Content part up/down changes request order', async ({ page }) => {
+    const message = page.locator('#messagesList > .items > .message-item').nth(1);
+    const parts = message.locator('.content-parts-container > .items > .content-part');
+    await parts.nth(1).locator('[data-act="up"]').click();
+    const content = await page.evaluate(() => buildRequest().body.messages[1].content);
+    expect(content.map(part => part.text)).toEqual(['second', 'first']);
+  });
+
+  test('Nested content part drag does not reorder parent messages', async ({ page }) => {
+    const message = page.locator('#messagesList > .items > .message-item').nth(1);
+    const parts = message.locator('.content-parts-container > .items > .content-part');
+    const rolesBefore = await page.locator('#messagesList > .items > .message-item .role-select').evaluateAll(
+      els => els.map(el => el.value));
+
+    await dragTo(page, parts.nth(0), parts.nth(1));
+
+    const rolesAfter = await page.locator('#messagesList > .items > .message-item .role-select').evaluateAll(
+      els => els.map(el => el.value));
+    expect(rolesAfter).toEqual(rolesBefore);
+    const content = await page.evaluate(() => buildRequest().body.messages[1].content);
+    expect(content.map(part => part.text)).toEqual(['second', 'first']);
   });
 });

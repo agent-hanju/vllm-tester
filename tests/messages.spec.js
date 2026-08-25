@@ -53,7 +53,7 @@ test.describe('Messages List CRUD', () => {
   });
 
   test('Edit message content persists', async ({ page }) => {
-    const contentTA = page.locator('#messagesList .items .item:nth-child(2) .f-content textarea');
+    const contentTA = page.locator('#messagesList .items .item:nth-child(2) .content-string');
     await contentTA.fill('Hello, test message');
     await expect(contentTA).toHaveValue('Hello, test message');
   });
@@ -84,19 +84,19 @@ test.describe('Messages List CRUD', () => {
   });
 
   test('Move message down: reorders correctly', async ({ page }) => {
-    await page.locator('#messagesList .items .item:nth-child(1) .f-content textarea').fill('Msg1');
-    await page.locator('#messagesList .items .item:nth-child(2) .f-content textarea').fill('Msg2');
+    await page.locator('#messagesList .items .item:nth-child(1) .content-string').fill('Msg1');
+    await page.locator('#messagesList .items .item:nth-child(2) .content-string').fill('Msg2');
     await page.locator('#messagesList .items .item:nth-child(1) [data-act="down"]').click();
-    const contents = page.locator('#messagesList .items .item .f-content textarea');
+    const contents = page.locator('#messagesList .items .item .content-string');
     await expect(contents.nth(0)).toHaveValue('Msg2');
     await expect(contents.nth(1)).toHaveValue('Msg1');
   });
 
   test('Move message up: reorders correctly', async ({ page }) => {
-    await page.locator('#messagesList .items .item:nth-child(1) .f-content textarea').fill('Msg1');
-    await page.locator('#messagesList .items .item:nth-child(2) .f-content textarea').fill('Msg2');
+    await page.locator('#messagesList .items .item:nth-child(1) .content-string').fill('Msg1');
+    await page.locator('#messagesList .items .item:nth-child(2) .content-string').fill('Msg2');
     await page.locator('#messagesList .items .item:nth-child(2) [data-act="up"]').click();
-    const contents = page.locator('#messagesList .items .item .f-content textarea');
+    const contents = page.locator('#messagesList .items .item .content-string');
     await expect(contents.nth(0)).toHaveValue('Msg2');
     await expect(contents.nth(1)).toHaveValue('Msg1');
   });
@@ -189,5 +189,114 @@ test.describe('Nested Tool Calls in Messages', () => {
     await page.locator('#messagesList .items .item:nth-child(1) .tc-container .item:nth-child(2) [data-act="up"]').click();
     await expect(tcNames.nth(0)).toHaveValue('FuncB');
     await expect(tcNames.nth(1)).toHaveValue('FuncA');
+  });
+});
+
+test.describe('Message Content Formats and Parts', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/vllm-tester.html');
+    await page.locator('#addMessage').waitFor({ state: 'visible' });
+  });
+
+  test('Default messages preserve String content format', async ({ page }) => {
+    const formats = page.locator('#messagesList > .items > .message-item .content-format');
+    await expect(formats).toHaveCount(2);
+    await expect(formats.nth(0)).toHaveValue('string');
+    await expect(formats.nth(1)).toHaveValue('string');
+  });
+
+  test('String to Content Parts creates one lossless text part', async ({ page }) => {
+    const message = page.locator('#messagesList > .items > .message-item').nth(1);
+    await message.locator('.content-string').fill('Hello multimodal');
+    await message.locator('.content-format').selectOption('parts');
+
+    const parts = message.locator('.content-parts-container > .items > .content-part');
+    await expect(parts).toHaveCount(1);
+    await expect(parts.locator('.cp-type')).toHaveText('TEXT');
+    await expect(parts.locator('.cp-text')).toHaveValue('Hello multimodal');
+  });
+
+  test('User and assistant expose all part buttons; system and tool expose Text only', async ({ page }) => {
+    const system = page.locator('#messagesList > .items > .message-item').nth(0);
+    const user = page.locator('#messagesList > .items > .message-item').nth(1);
+    await system.locator('.content-format').selectOption('parts');
+    await user.locator('.content-format').selectOption('parts');
+
+    await expect(system.locator('[data-part="text"]')).toBeVisible();
+    await expect(system.locator('[data-part="image"]')).toBeHidden();
+    await expect(user.locator('[data-part="image"]')).toBeVisible();
+    await expect(user.locator('[data-part="audio"]')).toBeVisible();
+    await expect(user.locator('[data-part="video"]')).toBeVisible();
+
+    await system.locator('.role-select').selectOption('assistant');
+    await expect(system.locator('[data-part="image"]')).toBeVisible();
+    await system.locator('.role-select').selectOption('tool');
+    await expect(system.locator('[data-part="text"]')).toBeVisible();
+    await expect(system.locator('[data-part="video"]')).toBeHidden();
+  });
+
+  test('Role change retains incompatible media and only warns', async ({ page }) => {
+    const message = page.locator('#messagesList > .items > .message-item').nth(1);
+    await message.locator('.content-format').selectOption('parts');
+    await message.locator('[data-part="image"]').click();
+    const image = message.locator('.content-part[data-part-kind="image"]');
+    await image.locator('.cp-file').setInputFiles({
+      name: 'pixel.png',
+      mimeType: 'image/png',
+      buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+    });
+    await expect(image.locator('.cp-validation')).toHaveClass(/v-ok/);
+
+    await message.locator('.role-select').selectOption('tool');
+    await expect(image).toHaveCount(1);
+    await expect(image).toHaveClass(/capability-warning/);
+    await expect(message.locator('.content-role-warning')).toContainText('tool role의 비권장 part');
+
+    const built = await page.evaluate(() => buildRequest().body.messages[1]);
+    expect(built.role).toBe('tool');
+    expect(built.content[1].type).toBe('image_url');
+    expect(built.content[1].image_url.url).toBe('data:image/png;base64,iVBORw==');
+  });
+
+  test('Single text part converts back to String without warning', async ({ page }) => {
+    const message = page.locator('#messagesList > .items > .message-item').nth(1);
+    await message.locator('.content-string').fill('round trip');
+    await message.locator('.content-format').selectOption('parts');
+    await message.locator('.content-format').selectOption('string');
+    await expect(message.locator('.content-format')).toHaveValue('string');
+    await expect(message.locator('.content-string')).toHaveValue('round trip');
+    await expect(page.locator('#contentConversionDialog')).not.toBeVisible();
+  });
+
+  test('Lossy conversion can be cancelled or confirmed with ordered text join', async ({ page }) => {
+    const message = page.locator('#messagesList > .items > .message-item').nth(1);
+    await message.locator('.content-format').selectOption('parts');
+    await message.locator('.cp-text').fill('first');
+    await message.locator('[data-part="image"]').click();
+    await message.locator('[data-part="text"]').click();
+    await message.locator('.content-part[data-part-kind="text"]').nth(1).locator('.cp-text').fill('second');
+
+    await message.locator('.content-format').selectOption('string');
+    const dialog = page.locator('#contentConversionDialog');
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole('button', { name: '취소' }).click();
+    await expect(dialog).toBeHidden();
+    await expect(message.locator('.content-format')).toHaveValue('parts');
+    await expect(message.locator('.content-part')).toHaveCount(3);
+
+    await message.locator('.content-format').selectOption('string');
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole('button', { name: 'Text만 합쳐 전환' }).click();
+    await expect(dialog).toBeHidden();
+    await expect(message.locator('.content-format')).toHaveValue('string');
+    await expect(message.locator('.content-string')).toHaveValue('first\nsecond');
+  });
+
+  test('Empty Content Parts serializes as an array rather than an empty String', async ({ page }) => {
+    const message = page.locator('#messagesList > .items > .message-item').nth(1);
+    await message.locator('.content-format').selectOption('parts');
+    await message.locator('.clear-content-parts').click();
+    const content = await page.evaluate(() => buildRequest().body.messages[1].content);
+    expect(content).toEqual([]);
   });
 });

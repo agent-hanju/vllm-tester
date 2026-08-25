@@ -1,5 +1,14 @@
 const { test, expect } = require('@playwright/test');
 
+async function importRequest(page, value) {
+  await page.locator('#importFile').setInputFiles({
+    name: 'request.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(value)),
+  });
+  await expect(page.locator('#ioStatus')).toContainText(/Import 완료|검증 실패/);
+}
+
 test.describe('Import / Export', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/vllm-tester.html');
@@ -189,5 +198,75 @@ test.describe('Import / Export', () => {
     await expect(page.locator('#messagesList .items > .item')).toHaveCount(1);
     const roleSelect = page.locator('#messagesList .items .item:nth-child(1) .role-select');
     await expect(roleSelect).toHaveValue('user');
+  });
+});
+
+test.describe('Message content Import / Export preservation', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/vllm-tester.html');
+    await page.locator('#addMessage').waitFor({ state: 'visible' });
+  });
+
+  test('String and single text-part array remain distinct wire formats', async ({ page }) => {
+    const request = {
+      messages: [
+        { role: 'system', content: 'same text' },
+        { role: 'user', content: [{ type: 'text', text: 'same text' }] },
+      ],
+    };
+    await importRequest(page, request);
+
+    const formats = page.locator('#messagesList > .items > .message-item .content-format');
+    await expect(formats.nth(0)).toHaveValue('string');
+    await expect(formats.nth(1)).toHaveValue('parts');
+    const messages = await page.evaluate(() => buildRequest().body.messages);
+    expect(messages).toEqual(request.messages);
+  });
+
+  test('Mixed multimodal array preserves order and full Data URLs', async ({ page }) => {
+    const content = [
+      { type: 'text', text: 'before' },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,iVBORw==' } },
+      { type: 'audio_url', audio_url: { url: 'data:audio/wav;base64,UklGRg==' } },
+      { type: 'video_url', video_url: { url: 'data:video/mp4;base64,AAAAAA==' } },
+      { type: 'text', text: 'after' },
+    ];
+    await importRequest(page, { messages: [{ role: 'assistant', content }] });
+
+    const parts = page.locator('.message-item .content-parts-container > .items > .content-part');
+    await expect(parts).toHaveCount(5);
+    await expect(parts.locator('.cp-type')).toHaveText(['TEXT', 'IMAGE', 'AUDIO', 'VIDEO', 'TEXT']);
+    const exported = await page.evaluate(() => buildRequest().body.messages[0].content);
+    expect(exported).toEqual(content);
+  });
+
+  test('Tool role imports media without deleting it and shows warning', async ({ page }) => {
+    const content = [
+      { type: 'text', text: 'result' },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,iVBORw==' } },
+    ];
+    await importRequest(page, {
+      messages: [{ role: 'tool', tool_call_id: 'call_1', content }],
+    });
+    const message = page.locator('#messagesList > .items > .message-item');
+    await expect(message.locator('.content-role-warning')).toContainText('tool role의 비권장 part');
+    expect(await page.evaluate(() => buildRequest().body.messages[0].content)).toEqual(content);
+  });
+
+  test('URL, file URI, and unknown part imports fail atomically', async ({ page }) => {
+    const existing = page.locator('#messagesList > .items > .message-item').nth(1).locator('.content-string');
+    await existing.fill('keep me');
+
+    const invalidContents = [
+      [{ type: 'image_url', image_url: { url: 'https://example.com/image.png' } }],
+      [{ type: 'video_url', video_url: { url: 'file:///tmp/video.mp4' } }],
+      [{ type: 'file', file: { data: 'abc' } }],
+    ];
+    for (const content of invalidContents) {
+      await importRequest(page, { messages: [{ role: 'user', content }] });
+      await expect(page.locator('#ioStatus')).toContainText('검증 실패');
+      await expect(existing).toHaveValue('keep me');
+      await expect(page.locator('#messagesList > .items > .message-item')).toHaveCount(2);
+    }
   });
 });

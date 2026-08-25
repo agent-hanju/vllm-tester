@@ -122,6 +122,13 @@
 <!-- Request Preview (SEND 후 갱신) -->
 <details id="reqPreviewDetails" class="req-preview">
   <summary>Request Body 보기</summary>
+  <div class="req-preview-toolbar">
+    <label class="inline-option">
+      <input id="compactBase64" type="checkbox" checked>
+      Base64 축약 표시
+    </label>
+    <button id="copyRequestBtn" type="button" disabled>전체 Request JSON 복사</button>
+  </div>
   <pre id="reqPreviewPre"></pre>
 </details>
 
@@ -218,8 +225,30 @@
       <input type="text" placeholder="call_xxxxx">
     </div>
     <div class="f-content">
-      <label>Content</label>
-      <textarea rows="3" spellcheck="false"></textarea>
+      <label>Content Format</label>
+      <select class="content-format">
+        <option value="string">String</option>
+        <option value="parts">Content Parts</option>
+      </select>
+      <div class="content-string-editor">
+        <label>Content</label>
+        <textarea class="content-string" rows="3" spellcheck="false"></textarea>
+      </div>
+      <div class="content-parts-editor" hidden>
+        <label>Content Parts</label>
+        <div class="content-parts-container">
+          <div class="clear-row"><button class="clear-content-parts" type="button">× 전체 삭제</button></div>
+          <p class="empty">— Content Part 없음 —</p>
+          <div class="items"></div>
+        </div>
+        <div class="add-row content-part-actions">
+          <button type="button" data-part="text">+ Text</button>
+          <button type="button" data-part="image">+ Image</button>
+          <button type="button" data-part="audio">+ Audio</button>
+          <button type="button" data-part="video">+ Video</button>
+        </div>
+        <div class="content-role-warning validation v-warn" hidden></div>
+      </div>
     </div>
     <div class="f-tool-calls">
       <label>Tool Calls</label>
@@ -232,6 +261,45 @@
     </div>
   </div>
 </template>
+
+<template id="tpl-content-part">
+  <div class="content-part item">
+    <div class="item-head">
+      <div class="left"><b class="cp-type"></b></div>
+      <div class="right">
+        <button data-act="up">↑</button>
+        <button data-act="down">↓</button>
+        <button data-act="del">×</button>
+      </div>
+    </div>
+    <div class="cp-text-editor" hidden>
+      <label>Text</label>
+      <textarea class="cp-text" rows="3" spellcheck="false"></textarea>
+    </div>
+    <div class="cp-media-editor" hidden>
+      <label class="cp-file-label">Local file → Base64 Data URL</label>
+      <input class="cp-file" type="file">
+      <textarea class="cp-data-url" hidden></textarea>
+      <div class="cp-media-meta">
+        <span class="cp-media-name">파일을 선택하세요.</span>
+        <span class="cp-media-info"></span>
+      </div>
+      <div class="cp-validation validation"></div>
+    </div>
+  </div>
+</template>
+
+<dialog id="contentConversionDialog" class="conversion-dialog">
+  <form method="dialog">
+    <h2>Content Parts를 String으로 전환</h2>
+    <p>String으로 전환하면 Content Part 일부가 제거됩니다.</p>
+    <pre class="conversion-summary"></pre>
+    <div class="dialog-actions">
+      <button value="cancel">취소</button>
+      <button value="confirm">Text만 합쳐 전환</button>
+    </div>
+  </form>
+</dialog>
 
 <template id="tpl-response-choice">
   <div class="item list-item response-item">
@@ -277,9 +345,12 @@ const $apiKey        = document.getElementById('apiKey');
 const $sendBtn       = document.getElementById('sendBtn');
 const $response      = document.getElementById('response');
 const $reqPreviewPre = document.getElementById('reqPreviewPre');
+const $compactBase64 = document.getElementById('compactBase64');
+const $copyRequestBtn = document.getElementById('copyRequestBtn');
 const $ioStatus      = document.getElementById('ioStatus');
 const $targetDisplay = document.getElementById('targetDisplay');
 const $importFile    = document.getElementById('importFile');
+const $contentConversionDialog = document.getElementById('contentConversionDialog');
 
 const $responseItems = $response.querySelector('.items');
 const $rStatus = $response.querySelector('.r-status');
@@ -287,6 +358,23 @@ const $rError  = $response.querySelector('.r-error');
 const $rBody   = $response.querySelector('.r-body');
 const $rUsage    = $response.querySelector('.r-usage');
 const $rLogprobs = $response.querySelector('.r-logprobs');
+
+const CONTENT_PART_CAPABILITIES = {
+  system:    ['text'],
+  user:      ['text', 'image', 'audio', 'video'],
+  assistant: ['text', 'image', 'audio', 'video'],
+  tool:      ['text'],
+};
+
+const CONTENT_PART_WIRE = {
+  text:  { type: 'text',      key: 'text',      mimePrefix: null },
+  image: { type: 'image_url', key: 'image_url', mimePrefix: 'image/' },
+  audio: { type: 'audio_url', key: 'audio_url', mimePrefix: 'audio/' },
+  video: { type: 'video_url', key: 'video_url', mimePrefix: 'video/' },
+};
+
+const WIRE_TO_CONTENT_PART = Object.fromEntries(
+  Object.entries(CONTENT_PART_WIRE).map(([kind, spec]) => [spec.type, kind]));
 
 function validateJsonSchema(text) {
   // 정식 JSON Schema 스펙 검증이 아님 — LLM이 작성한 휴리스틱적 검증 메서드
@@ -480,6 +568,226 @@ function createToolCallElement(init = {}, container) {
 
 
 /* ============================================================================
+ * Content Parts
+ * ========================================================================== */
+
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes < 0) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ['KiB', 'MiB', 'GiB'];
+  let value = bytes / 1024;
+  let unit = units[0];
+  for (let i = 1; i < units.length && value >= 1024; i++) {
+    value /= 1024;
+    unit = units[i];
+  }
+  return `${value.toFixed(value >= 10 ? 1 : 2)} ${unit}`;
+}
+
+function inspectDataUrl(dataUrl, kind) {
+  if (typeof dataUrl !== 'string') return { ok: false, error: 'Data URL이 문자열이 아닙니다.' };
+  const match = /^data:([^;,]+);base64,([A-Za-z0-9+/]*={0,2})$/.exec(dataUrl);
+  if (!match) return { ok: false, error: 'Base64 Data URL 형식이 아닙니다.' };
+  const spec = CONTENT_PART_WIRE[kind];
+  const mime = match[1].toLowerCase();
+  if (!spec || !spec.mimePrefix || !mime.startsWith(spec.mimePrefix)) {
+    return { ok: false, error: `${kind} part에 맞지 않는 MIME type입니다: ${mime}` };
+  }
+  const encoded = match[2];
+  const padding = encoded.endsWith('==') ? 2 : encoded.endsWith('=') ? 1 : 0;
+  const bytes = Math.max(0, Math.floor(encoded.length * 3 / 4) - padding);
+  return { ok: true, mime, encodedLength: encoded.length, bytes };
+}
+
+function renderMediaPartState(div, filename) {
+  const kind = div.dataset.partKind;
+  const dataUrl = div.querySelector('.cp-data-url').value;
+  const nameEl = div.querySelector('.cp-media-name');
+  const infoEl = div.querySelector('.cp-media-info');
+  const valEl = div.querySelector('.cp-validation');
+  if (!dataUrl) {
+    nameEl.textContent = '파일을 선택하세요.';
+    infoEl.textContent = '';
+    valEl.textContent = '✗ 전송할 파일이 필요합니다.';
+    valEl.className = 'cp-validation validation v-err';
+    return false;
+  }
+  const inspected = inspectDataUrl(dataUrl, kind);
+  if (!inspected.ok) {
+    nameEl.textContent = filename || 'Data URL';
+    infoEl.textContent = '';
+    valEl.textContent = '✗ ' + inspected.error;
+    valEl.className = 'cp-validation validation v-err';
+    return false;
+  }
+  nameEl.textContent = filename || 'Imported Data URL';
+  infoEl.textContent = `${inspected.mime} · ${formatBytes(inspected.bytes)} · Base64 ${formatBytes(inspected.encodedLength)}`;
+  valEl.textContent = '✓ Base64 Data URL 준비됨';
+  valEl.className = 'cp-validation validation v-ok';
+  return true;
+}
+
+function createContentPartElement(init = {}, container, onchange) {
+  const kind = init.kind || 'text';
+  const spec = CONTENT_PART_WIRE[kind];
+  if (!spec) throw new Error('지원하지 않는 Content Part: ' + kind);
+
+  const div = cloneTemplate('tpl-content-part');
+  div.dataset.partKind = kind;
+  div.querySelector('.cp-type').textContent = kind.toUpperCase();
+
+  const textEditor = div.querySelector('.cp-text-editor');
+  const mediaEditor = div.querySelector('.cp-media-editor');
+  if (kind === 'text') {
+    textEditor.hidden = false;
+    div.querySelector('.cp-text').value = typeof init.text === 'string' ? init.text : '';
+  } else {
+    mediaEditor.hidden = false;
+    const fileInput = div.querySelector('.cp-file');
+    fileInput.accept = spec.mimePrefix + '*';
+    div.querySelector('.cp-file-label').textContent = `${kind} file → Base64 Data URL`;
+    const dataUrlInput = div.querySelector('.cp-data-url');
+    dataUrlInput.value = typeof init.dataUrl === 'string' ? init.dataUrl : '';
+    renderMediaPartState(div, init.filename || '');
+
+    fileInput.addEventListener('click', () => { fileInput.value = ''; });
+    fileInput.addEventListener('change', () => {
+      const file = fileInput.files && fileInput.files[0];
+      if (!file) return;
+      const valEl = div.querySelector('.cp-validation');
+      if (!file.type || !file.type.toLowerCase().startsWith(spec.mimePrefix)) {
+        valEl.textContent = `✗ ${kind} 파일이 아닙니다: ${file.type || 'MIME 없음'}`;
+        valEl.className = 'cp-validation validation v-err';
+        fileInput.value = '';
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onerror = () => {
+        valEl.textContent = '✗ 파일 읽기 실패';
+        valEl.className = 'cp-validation validation v-err';
+        fileInput.value = '';
+      };
+      reader.onload = () => {
+        const result = typeof reader.result === 'string' ? reader.result : '';
+        const inspected = inspectDataUrl(result, kind);
+        if (!inspected.ok) {
+          valEl.textContent = '✗ ' + inspected.error;
+          valEl.className = 'cp-validation validation v-err';
+          fileInput.value = '';
+          return;
+        }
+        dataUrlInput.value = result;
+        renderMediaPartState(div, file.name);
+        onchange?.();
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  attachItemButtonListeners(div, container, onchange);
+  return div;
+}
+
+function parseMessageContentValue(content, path) {
+  if (typeof content === 'string') {
+    return { ok: true, value: { contentFormat: 'string', content } };
+  }
+  if (!Array.isArray(content)) {
+    return { ok: false, error: `${path}는 string 또는 ContentPart[]여야 합니다` };
+  }
+
+  const contentParts = [];
+  for (let i = 0; i < content.length; i++) {
+    const part = content[i];
+    if (typeof part !== 'object' || part === null || Array.isArray(part)) {
+      return { ok: false, error: `${path}[${i}]가 객체가 아닙니다` };
+    }
+    const kind = WIRE_TO_CONTENT_PART[part.type];
+    if (!kind) {
+      return { ok: false, error: `${path}[${i}].type을 지원하지 않습니다 (${part.type})` };
+    }
+    const spec = CONTENT_PART_WIRE[kind];
+    if (kind === 'text') {
+      if (typeof part.text !== 'string') {
+        return { ok: false, error: `${path}[${i}].text가 문자열이 아닙니다` };
+      }
+      contentParts.push({ kind, text: part.text });
+      continue;
+    }
+    const media = part[spec.key];
+    if (typeof media !== 'object' || media === null || Array.isArray(media) || typeof media.url !== 'string') {
+      return { ok: false, error: `${path}[${i}].${spec.key}.url이 문자열이 아닙니다` };
+    }
+    const inspected = inspectDataUrl(media.url, kind);
+    if (!inspected.ok) {
+      return { ok: false, error: `${path}[${i}]: ${inspected.error}` };
+    }
+    contentParts.push({ kind, dataUrl: media.url });
+  }
+  return { ok: true, value: { contentFormat: 'parts', contentParts } };
+}
+
+function updateContentRoleCapability(messageDiv) {
+  const role = messageDiv.querySelector('.role-select').value;
+  const allowed = CONTENT_PART_CAPABILITIES[role] || ['text'];
+  messageDiv.querySelectorAll('.content-part-actions [data-part]').forEach(button => {
+    button.hidden = !allowed.includes(button.dataset.part);
+  });
+
+  const incompatible = [];
+  messageDiv.querySelectorAll('.content-parts-container > .items > .content-part').forEach(part => {
+    const unsupported = !allowed.includes(part.dataset.partKind);
+    part.classList.toggle('capability-warning', unsupported);
+    if (unsupported) incompatible.push(part.dataset.partKind);
+  });
+  const warning = messageDiv.querySelector('.content-role-warning');
+  if (incompatible.length === 0) {
+    warning.hidden = true;
+    warning.textContent = '';
+  } else {
+    const counts = Object.entries(incompatible.reduce((acc, kind) => {
+      acc[kind] = (acc[kind] || 0) + 1;
+      return acc;
+    }, {})).map(([kind, count]) => `${kind} ${count}개`);
+    warning.hidden = false;
+    warning.textContent = `⚠ ${role} role의 비권장 part: ${counts.join(', ')}. 데이터는 유지되며 전송할 수 있습니다.`;
+  }
+}
+
+function showMessageContentEditor(messageDiv, format) {
+  messageDiv.querySelector('.content-string-editor').hidden = format !== 'string';
+  messageDiv.querySelector('.content-parts-editor').hidden = format !== 'parts';
+}
+
+function getContentPartStats(partsItems) {
+  const parts = [...partsItems.querySelectorAll(':scope > .content-part')];
+  return {
+    parts,
+    textCount: parts.filter(part => part.dataset.partKind === 'text').length,
+    mediaCount: parts.filter(part => part.dataset.partKind !== 'text').length,
+  };
+}
+
+function confirmLossyContentConversion(stats) {
+  if (typeof $contentConversionDialog.showModal !== 'function') {
+    return Promise.resolve(window.confirm(
+      `String으로 전환하면 Content Part 일부가 제거됩니다.\n` +
+      `text part: ${stats.textCount}개\nmedia part: ${stats.mediaCount}개`));
+  }
+  $contentConversionDialog.querySelector('.conversion-summary').textContent =
+    `text part: ${stats.textCount}개\nmedia part: ${stats.mediaCount}개`;
+  return new Promise(resolve => {
+    $contentConversionDialog.returnValue = '';
+    $contentConversionDialog.addEventListener('close', () => {
+      resolve($contentConversionDialog.returnValue === 'confirm');
+    }, { once: true });
+    $contentConversionDialog.showModal();
+  });
+}
+
+
+/* ============================================================================
  * Messages
  * ========================================================================== */
 
@@ -494,11 +802,40 @@ function createMessageElement(init = {}) {
   const fTc         = div.querySelector('.f-tool-calls');
   const tcContainer  = div.querySelector('.tc-container');
   const tcItems      = tcContainer.querySelector('.items');
+  const formatSelect = fContent.querySelector('.content-format');
+  const stringInput  = fContent.querySelector('.content-string');
+  const partsContainer = fContent.querySelector('.content-parts-container');
+  const partsItems     = partsContainer.querySelector('.items');
+
+  let contentState;
+  if (init.contentFormat === 'parts') {
+    contentState = {
+      contentFormat: 'parts',
+      contentParts: Array.isArray(init.contentParts) ? init.contentParts : [],
+    };
+  } else if (init.contentFormat === 'string') {
+    contentState = {
+      contentFormat: 'string',
+      content: typeof init.content === 'string' ? init.content : '',
+    };
+  } else {
+    const parsed = parseMessageContentValue(init.content === undefined ? '' : init.content, 'content');
+    if (!parsed.ok) throw new Error(parsed.error);
+    contentState = parsed.value;
+  }
 
   roleSelect.value = role;
   fReasoning.querySelector('textarea').value = init.reasoning_content || '';
   fTci.querySelector('input').value          = init.tool_call_id || '';
-  fContent.querySelector('textarea').value   = init.content || '';
+  formatSelect.value = contentState.contentFormat;
+  stringInput.value = contentState.contentFormat === 'string' ? contentState.content : '';
+  if (contentState.contentFormat === 'parts') {
+    contentState.contentParts.forEach(part => {
+      partsItems.appendChild(createContentPartElement(part, partsContainer, () => updateContentRoleCapability(div)));
+    });
+  }
+  checkEmpty(partsContainer);
+  showMessageContentEditor(div, contentState.contentFormat);
 
   if (Array.isArray(init.tool_calls)) {
     init.tool_calls.forEach(tc => tcItems.appendChild(createToolCallElement(tc, tcContainer)));
@@ -514,11 +851,53 @@ function createMessageElement(init = {}) {
     checkEmpty(tcContainer);
   });
   enableDragSort(tcContainer);
+  enableDragSort(partsContainer);
+
+  fContent.querySelectorAll('.content-part-actions [data-part]').forEach(button => {
+    button.addEventListener('click', () => {
+      const kind = button.dataset.part;
+      partsItems.appendChild(createContentPartElement({ kind }, partsContainer, () => updateContentRoleCapability(div)));
+      checkEmpty(partsContainer);
+      updateContentRoleCapability(div);
+    });
+  });
+  fContent.querySelector('.clear-content-parts').addEventListener('click', () => {
+    partsItems.replaceChildren();
+    checkEmpty(partsContainer);
+    updateContentRoleCapability(div);
+  });
+
+  formatSelect.addEventListener('change', async () => {
+    if (formatSelect.value === 'parts') {
+      partsItems.replaceChildren();
+      partsItems.appendChild(createContentPartElement(
+        { kind: 'text', text: stringInput.value },
+        partsContainer,
+        () => updateContentRoleCapability(div)));
+      checkEmpty(partsContainer);
+      showMessageContentEditor(div, 'parts');
+      updateContentRoleCapability(div);
+      return;
+    }
+
+    const stats = getContentPartStats(partsItems);
+    const lossless = stats.parts.length === 1 && stats.parts[0].dataset.partKind === 'text';
+    formatSelect.value = 'parts';
+    if (!lossless && !(await confirmLossyContentConversion(stats))) return;
+
+    const texts = stats.parts
+      .filter(part => part.dataset.partKind === 'text')
+      .map(part => part.querySelector('.cp-text').value);
+    stringInput.value = lossless ? texts[0] : texts.join('\n');
+    formatSelect.value = 'string';
+    showMessageContentEditor(div, 'string');
+  });
 
   function applyRole(r) {
     fReasoning.hidden = r !== 'assistant';
     fTci.hidden       = r !== 'tool';
     fTc.hidden        = r !== 'assistant';
+    updateContentRoleCapability(div);
   }
   applyRole(role);
   roleSelect.addEventListener('change', () => applyRole(roleSelect.value));
@@ -545,6 +924,37 @@ function addMessage() {
 /* ============================================================================
  * Request
  * ========================================================================== */
+function requestValidationError(message, element) {
+  const error = new Error(message);
+  error.isRequestValidation = true;
+  error.element = element;
+  return error;
+}
+
+function readContentPart(partDiv) {
+  const kind = partDiv.dataset.partKind;
+  const spec = CONTENT_PART_WIRE[kind];
+  if (!spec) throw requestValidationError('지원하지 않는 Content Part입니다: ' + kind, partDiv);
+  if (kind === 'text') {
+    return { type: 'text', text: partDiv.querySelector('.cp-text').value };
+  }
+
+  const dataUrl = partDiv.querySelector('.cp-data-url').value;
+  const inspected = inspectDataUrl(dataUrl, kind);
+  if (!inspected.ok) {
+    renderMediaPartState(partDiv, partDiv.querySelector('.cp-media-name').textContent);
+    throw requestValidationError(`${kind} part: ${inspected.error}`, partDiv);
+  }
+  return { type: spec.type, [spec.key]: { url: dataUrl } };
+}
+
+function readMessageContent(messageDiv) {
+  const format = messageDiv.querySelector('.content-format').value;
+  if (format === 'string') return messageDiv.querySelector('.content-string').value;
+  return [...messageDiv.querySelectorAll('.content-parts-container > .items > .content-part')]
+    .map(readContentPart);
+}
+
 function buildRequest() {
   const base = SERVER_MODE ? '' : (document.getElementById('baseUrl').value.trim().replace(/\/+$/, ''));
   const url    = base + '/v1/chat/completions';
@@ -557,11 +967,12 @@ function buildRequest() {
   // ----- messages -----
   body.messages = [...$messagesItems.querySelectorAll(':scope > .item')].map(div => {
     const role = div.querySelector('.role-select').value;
+    const content = readMessageContent(div);
     if (role === 'system' || role === 'user') {
-      return { role, content: div.querySelector('.f-content textarea').value };
+      return { role, content };
     }
     if (role === 'assistant') {
-      const out = { role: 'assistant', content: div.querySelector('.f-content textarea').value };
+      const out = { role: 'assistant', content };
       const rc = div.querySelector('.f-reasoning textarea').value;
       if (rc) out.reasoning_content = rc;
       const tcs = [...div.querySelectorAll(':scope > .tc-container > .items > .item')].map(tc => ({
@@ -576,7 +987,7 @@ function buildRequest() {
       return {
         role: 'tool',
         tool_call_id: div.querySelector('.f-tool-call-id input').value,
-        content: div.querySelector('.f-content textarea').value,
+        content,
       };
     }
   });
@@ -649,8 +1060,64 @@ function buildRequest() {
  * Request View
  * ========================================================================== */
 
+let lastRequestBody = null;
+
+function requestJson(body, compactBase64) {
+  return JSON.stringify(body, (key, value) => {
+    if (!compactBase64 || typeof value !== 'string') return value;
+    const match = /^(data:[^;,]+;base64,)([A-Za-z0-9+/]*={0,2})$/.exec(value);
+    if (!match) return value;
+    return `${match[1]}<omitted: ${match[2].length} chars>`;
+  }, 2);
+}
+
 function renderRequestView(body) {
-  $reqPreviewPre.textContent = JSON.stringify(body, null, 2);
+  lastRequestBody = body;
+  $copyRequestBtn.disabled = false;
+  $reqPreviewPre.textContent = requestJson(body, $compactBase64.checked);
+}
+
+function handleRequestValidationError(error) {
+  if (!error || !error.isRequestValidation) return false;
+  renderIoStatus('✗ ' + error.message, 'err');
+  if (error.element) {
+    error.element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    error.element.classList.add('validation-focus');
+    setTimeout(() => error.element?.classList.remove('validation-focus'), 1800);
+  }
+  return true;
+}
+
+function copyTextFallback(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  const ok = document.execCommand('copy');
+  ta.remove();
+  if (!ok) throw new Error('clipboard에 복사하지 못했습니다');
+}
+
+async function copyFullRequestJson() {
+  if (!lastRequestBody) return;
+  const text = requestJson(lastRequestBody, false);
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      copyTextFallback(text);
+    }
+    renderIoStatus('✓ 전체 Base64를 포함한 Request JSON 복사 완료', 'ok');
+  } catch (error) {
+    try {
+      copyTextFallback(text);
+      renderIoStatus('✓ 전체 Base64를 포함한 Request JSON 복사 완료', 'ok');
+    } catch {
+      renderIoStatus('✗ Request JSON 복사 실패: ' + error.message, 'err');
+    }
+  }
 }
 
 
@@ -664,11 +1131,18 @@ function renderRequestView(body) {
 // 응답 message 객체를 받아서 새 assistant Message 로 DOM 에 바로 추가한다.
 //   responseMessage = { content?, reasoning_content?, reasoning?, tool_calls? }
 function copyResponseToMessage(responseMessage) {
+  const parsedContent = parseMessageContentValue(
+    responseMessage.content === undefined || responseMessage.content === null ? '' : responseMessage.content,
+    'response.message.content');
+  if (!parsedContent.ok) {
+    renderIoStatus('✗ Messages 복사 실패: ' + parsedContent.error, 'err');
+    return;
+  }
   const reasoning = responseMessage.reasoning_content || responseMessage.reasoning || '';
   const tcs = Array.isArray(responseMessage.tool_calls) ? responseMessage.tool_calls : [];
   const init = {
     role: 'assistant',
-    content: responseMessage.content || '',
+    ...parsedContent.value,
     reasoning_content: reasoning,
     tool_calls: tcs.map(tc => ({
       id:        tc.id || ('call_' + uid()),
@@ -712,7 +1186,14 @@ async function sendRequest() {
     return;
   }
 
-  const { url, apiKey, body } = buildRequest();
+  let request;
+  try {
+    request = buildRequest();
+  } catch (error) {
+    if (handleRequestValidationError(error)) return;
+    throw error;
+  }
+  const { url, apiKey, body } = request;
 
   if (!url) {
     resetResponse();
@@ -794,10 +1275,11 @@ async function renderNormalResponse(res, t0) {
         div.querySelector('.r-reasoning').hidden = false;
         div.querySelector('.r-reasoning').textContent = reasoning;
       }
-      if (msg.content) {
+      if (msg.content !== undefined && msg.content !== null && msg.content !== '') {
         div.querySelector('.r-content-label').hidden = false;
         div.querySelector('.r-content').hidden = false;
-        div.querySelector('.r-content').textContent = msg.content;
+        div.querySelector('.r-content').textContent =
+          typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content, null, 2);
       }
       if (msg.tool_calls && msg.tool_calls.length > 0) {
         div.querySelector('.r-tc-label').hidden = false;
@@ -848,7 +1330,10 @@ function showInChoice(div, cls, labelCls, text) {
 }
 
 async function renderStreamingResponse(res, t0) {
-  const acc = { content: '', reasoning: '', tool_calls: [], finish: null, usage: null, logprobs: [] };
+  const acc = {
+    content: '', contentParts: null, reasoning: '', tool_calls: [],
+    finish: null, usage: null, logprobs: [],
+  };
 
   $rStatus.hidden    = false;
   $rStatus.className = 'r-status v-ok';
@@ -890,7 +1375,10 @@ async function renderStreamingResponse(res, t0) {
       }
 
       showInChoice(div, '.r-reasoning', '.r-reasoning-label', acc.reasoning);
-      showInChoice(div, '.r-content',   '.r-content-label',   acc.content);
+      const renderedContent = acc.contentParts
+        ? JSON.stringify(acc.contentParts, null, 2)
+        : acc.content;
+      showInChoice(div, '.r-content',   '.r-content-label',   renderedContent);
       showInChoice(div, '.r-tc',        '.r-tc-label',
         acc.tool_calls.length > 0 ? JSON.stringify(acc.tool_calls, null, 2) : '');
       $rStatus.textContent =
@@ -919,7 +1407,7 @@ async function renderStreamingResponse(res, t0) {
   copyBtn.disabled = false;
   copyBtn.textContent = '↓ Messages 에 assistant 로 추가';
   copyBtn.addEventListener('click', () => copyResponseToMessage({
-    content: acc.content,
+    content: acc.contentParts || acc.content,
     reasoning_content: acc.reasoning,
     tool_calls: acc.tool_calls,
   }));
@@ -940,7 +1428,22 @@ function mergeStreamChunk(chunk, acc) {
     const ch = chunk.choices[0];
     const d  = ch.delta || {};
 
-    if (d.content)           acc.content   += d.content;
+    if (typeof d.content === 'string' && d.content) {
+      if (acc.contentParts) {
+        const last = acc.contentParts[acc.contentParts.length - 1];
+        if (last && last.type === 'text') last.text += d.content;
+        else acc.contentParts.push({ type: 'text', text: d.content });
+      } else {
+        acc.content += d.content;
+      }
+    } else if (Array.isArray(d.content)) {
+      if (!acc.contentParts) {
+        acc.contentParts = [];
+        if (acc.content) acc.contentParts.push({ type: 'text', text: acc.content });
+        acc.content = '';
+      }
+      acc.contentParts.push(...d.content);
+    }
     if (d.reasoning_content) acc.reasoning += d.reasoning_content;
     if (d.reasoning)         acc.reasoning += d.reasoning;
 
@@ -993,7 +1496,13 @@ function renderIoStatus(msg, type) {
 // state → request body JSON 파일 다운로드.
 // Blob + <a download> 트릭 (브라우저 표준, 외부 의존성 없음).
 function exportRequestJson() {
-  const { body } = buildRequest();
+  let body;
+  try {
+    ({ body } = buildRequest());
+  } catch (error) {
+    if (handleRequestValidationError(error)) return;
+    throw error;
+  }
   const json = JSON.stringify(body, null, 2);
 
   const blob = new Blob([json], { type: 'application/json' });
@@ -1046,10 +1555,9 @@ function importRequestJson(file) {
 //   { ok: false, error: '에러 메시지' }
 //
 // 외부 형태 → 내부 형태 변환 규칙:
+//   - content 의 string | ContentPart[] union 및 part 순서를 보존
 //   - assistant.tool_calls[].function.{name,arguments} → 평면 {name, arguments}
 //   - tool 의 fn.parameters (객체) → JSON.stringify 한 문자열
-//   - content 가 multi-modal 배열인 경우 JSON.stringify 해서 텍스트로 보여줌
-//     (이 앱은 텍스트 content 만 편집 가능)
 function parseImportedRequest(obj) {
   if (typeof obj !== 'object' || obj === null || Array.isArray(obj)) {
     return { ok: false, error: '루트가 객체가 아닙니다' };
@@ -1057,12 +1565,6 @@ function parseImportedRequest(obj) {
   if (!Array.isArray(obj.messages)) {
     return { ok: false, error: '"messages" 배열이 없습니다' };
   }
-
-  const contentToString = (c) => {
-    if (typeof c === 'string') return c;
-    if (c == null) return '';
-    return JSON.stringify(c);  // multi-modal 등은 그대로 직렬화
-  };
 
   // ----- messages -----
   const messages = [];
@@ -1075,13 +1577,11 @@ function parseImportedRequest(obj) {
       return { ok: false, error: `messages[${i}].role 이 유효하지 않음 (${m.role})` };
     }
 
-    const internal = { id: uid(), role: m.role };
+    const parsedContent = parseMessageContentValue(m.content, `messages[${i}].content`);
+    if (!parsedContent.ok) return parsedContent;
+    const internal = { id: uid(), role: m.role, ...parsedContent.value };
 
-    if (m.role === 'system' || m.role === 'user') {
-      internal.content = contentToString(m.content);
-
-    } else if (m.role === 'assistant') {
-      internal.content = contentToString(m.content);
+    if (m.role === 'assistant') {
       // reasoning_content 가 정식, reasoning 키도 받아준다
       internal.reasoning_content =
         typeof m.reasoning_content === 'string' ? m.reasoning_content :
@@ -1109,7 +1609,6 @@ function parseImportedRequest(obj) {
 
     } else if (m.role === 'tool') {
       internal.tool_call_id = typeof m.tool_call_id === 'string' ? m.tool_call_id : '';
-      internal.content      = contentToString(m.content);
     }
     messages.push(internal);
   }
@@ -1339,6 +1838,10 @@ document.getElementById('clearMessages').addEventListener('click', () => {
 $sendBtn.addEventListener('click', sendRequest);
 
 document.getElementById('exportBtn').addEventListener('click', exportRequestJson);
+$compactBase64.addEventListener('change', () => {
+  if (lastRequestBody) $reqPreviewPre.textContent = requestJson(lastRequestBody, $compactBase64.checked);
+});
+$copyRequestBtn.addEventListener('click', copyFullRequestJson);
 const $themeBtn = document.getElementById('themeBtn');
 $themeBtn.addEventListener('click', () => {
   const html = document.documentElement;
